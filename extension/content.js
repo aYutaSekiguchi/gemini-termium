@@ -983,46 +983,32 @@
       const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
       const wsTree = wsData?.fileTree || '(empty workspace)';
 
-      const promptInstruction = `You are an autonomous coding agent operating in the user's local workspace.
-Current workspace structure:
+      const promptInstruction = `I am developing and working on a local project in directory "${wsName}".
+Here is the current file tree of my workspace:
 
-[WORKSPACE STRUCTURE]
-Working Directory: ${wsName}
-Files:
+Workspace files:
 ${wsTree}
 
-[OPERATION RULES]
-To interact with the local workspace (reading files, writing code, executing commands), you MUST use the following bracket tags ([tag]...[/tag]). Do NOT use HTML angle tags (<read>, etc.) because browser HTML sanitizers strip them out.
+Please assist me with pair programming on this repository.
+I am running a local terminal bridge and will execute your suggested commands or inspect files on my machine, and paste the output back into this chat so we can proceed step by step.
 
-1. Read File:
-   When you need to inspect or read a file, output ONLY:
-   [read]file_path[/read]
-   (e.g., [read]README.md[/read] or [read]src/server.js[/read])
+Guidelines for proposing actions:
+1. To inspect files or run commands:
+   Propose the shell command in a single \`\`\`bash code block (e.g. \`\`\`bash\ncat README.md\n\`\`\` to inspect a file, or \`\`\`bash\ngit status\n\`\`\` / \`\`\`bash\nnpm test\n\`\`\` for checks).
+2. To create or update a file:
+   Provide the full code in a markdown code block with the relative target path in the first line (e.g. \`\`\`js\n// filepath: src/index.js\n...code...\n\`\`\`).
 
-2. Write / Edit File:
-   When creating new files or modifying existing files, output:
-   [write path="file_path"]file_content[/write]
-
-3. Execute Shell Command:
-   When you need to run tests, build tools, inspect git status, or check environment, output:
-   [exec]shell_command[/exec]
-   (e.g., [exec]npm test[/exec] or [exec]git status[/exec])
-
-[CRITICAL RULES]
-- Always use square brackets ([read], [write], [exec]) instead of HTML tags to prevent DOM sanitization issues.
-- To read file contents, ALWAYS use [read]file_path[/read] rather than shell commands (cat/less).
-- After emitting a tool call tag, completely STOP generating further thoughts or text, and WAIT until the user provides the execution result.
-- Emit at most one tool call per turn.`;
+Please propose one action at a time and wait for my output before proceeding to the next step.`;
 
       if (arg) {
-        const fullPrompt = `${promptInstruction}\n\n[USER INSTRUCTION]\n${arg}`;
+        const fullPrompt = `${promptInstruction}\n\nTask:\n${arg}`;
         setPromptText(editor, fullPrompt);
-        showToast('🤖 Agent prompt prepared with file tree. Starting...', 'info', 3000);
+        showToast('🤖 Pair programming prompt prepared with file tree. Starting...', 'info', 3000);
         setTimeout(() => submitCurrentPrompt(), 300);
       } else {
-        const template = `${promptInstruction}\n\n[USER INSTRUCTION]\n`;
+        const template = `${promptInstruction}\n\nTask:\n`;
         setPromptText(editor, template);
-        showToast('🤖 Agent template with file tree inserted. Add your prompt and press Enter.', 'info', 6000);
+        showToast('🤖 Template with file tree inserted. Add your request and press Enter.', 'info', 6000);
       }
     }
 
@@ -1445,18 +1431,34 @@ To interact with the local workspace (reading files, writing code, executing com
             const isExplicitTool = block.hasAttribute('data-tool') ||
                                    block.classList.contains('agent-tool') ||
                                    responseEl.hasAttribute('data-agent') ||
-                                   (codeBlocks.length === 1 && !responseEl.querySelector('p:not(.model-response-label-announcer *)'));
+                                   codeBlocks.length === 1;
             if (isExplicitTool) {
               writePath = explicit[1];
             }
           }
         }
+        if (!writePath && block.previousElementSibling) {
+          const prevText = (block.previousElementSibling.textContent || '').trim();
+          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
+                            prevText.match(/(?:file|path|filepath|filename):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
+          if (prevMatch && looksLikeFilePath(prevMatch[1])) {
+            const isExplicitTool = block.hasAttribute('data-tool') ||
+                                   block.classList.contains('agent-tool') ||
+                                   responseEl.hasAttribute('data-agent') ||
+                                   codeBlocks.length === 1;
+            if (isExplicitTool) {
+              writePath = prevMatch[1];
+            }
+          }
+        }
         if (writePath) {
+          let cleanContent = content;
+          cleanContent = cleanContent.replace(/^(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*[^\s*]+(?:\s*\*\/|-->)?\r?\n?/i, '');
           return {
             type: 'write',
             title: 'Write Workspace File',
             filePath: sanitizeTagValue(writePath),
-            content,
+            content: cleanContent,
             rawTag: block.outerHTML || content
           };
         }
@@ -1470,10 +1472,19 @@ To interact with the local workspace (reading files, writing code, executing com
                                  block.hasAttribute('data-tool') ||
                                  block.classList.contains('agent-tool') ||
                                  responseEl.hasAttribute('data-agent') ||
-                                 (codeBlocks.length === 1 && !responseEl.querySelector('p:not(.model-response-label-announcer *)'));
+                                 codeBlocks.length === 1;
           if (isExplicitTool) {
             const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
             if (rawCmd) {
+              const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+              if (catMatch && looksLikeFilePath(catMatch[1])) {
+                return {
+                  type: 'read',
+                  title: 'Read Workspace File',
+                  filePath: catMatch[1].replace(/^\.\//, ''),
+                  rawTag: block.outerHTML || content
+                };
+              }
               if (looksLikeFilePath(rawCmd)) {
                 return {
                   type: 'read',

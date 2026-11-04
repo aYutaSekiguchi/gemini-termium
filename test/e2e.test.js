@@ -444,11 +444,11 @@ console.log("hello from e2e test");</code></pre>
     // Verify prompt was populated with agent instructions, workspace file tree, and task
     const editorContent = await pollUntil(async () => {
       const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('[WORKSPACE STRUCTURE]') ? text : null;
+      return text && text.includes('Workspace files:') ? text : null;
     }, 5000);
 
     assert.ok(editorContent.includes('tree_sample.js'), 'Prompt must contain workspace file tree');
-    assert.ok(editorContent.includes('[read]'), 'Prompt must contain [read] instruction');
+    assert.ok(editorContent.includes('```bash'), 'Prompt must contain bash instruction');
     assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });
 
@@ -958,5 +958,97 @@ console.log("hello from e2e test");</code></pre>
 
     assert.ok(editorResult, 'Modal must close and file content must be submitted via pointerdown');
     assert.match(editorResult, /pointer_event_success_data/);
+  });
+
+  it('18. Detects file read action from natural markdown "cat <file>" bash code block', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'natural-read.txt'), 'natural_markdown_read_content');
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const p = document.createElement('p');
+        p.textContent = 'To investigate the problem, let us check natural-read.txt:';
+        const pre = document.createElement('pre');
+        pre.className = 'language-bash';
+        const code = document.createElement('code');
+        code.textContent = 'cat natural-read.txt';
+        pre.appendChild(code);
+        resp.appendChild(p);
+        resp.appendChild(pre);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting file read from cat command
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('natural-read.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must detect file read from "cat natural-read.txt"');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file content read from workspace
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('natural_markdown_read_content') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive file content from natural cat block');
+  });
+
+  it('19. Detects file write action from natural markdown "// filepath: <file>" code block with conversational explanation', async () => {
+    const targetFile = path.join(tmpWorkspaceDir, 'natural-write.js');
+    if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const p = document.createElement('p');
+        p.textContent = 'I have updated natural-write.js to resolve the issue:';
+        const pre = document.createElement('pre');
+        pre.className = 'language-javascript';
+        const code = document.createElement('code');
+        code.textContent = '// filepath: natural-write.js\\nconsole.log("natural_write_success");';
+        pre.appendChild(code);
+        resp.appendChild(p);
+        resp.appendChild(pre);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting write from // filepath:
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('natural-write.js'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must detect write from "// filepath: natural-write.js"');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file written to disk without leading comment
+    await pollUntil(async () => fs.existsSync(targetFile) ? true : null, 5000);
+    assert.equal(fs.existsSync(targetFile), true);
+    const content = fs.readFileSync(targetFile, 'utf8');
+    assert.equal(content.trim(), 'console.log("natural_write_success");');
   });
 });

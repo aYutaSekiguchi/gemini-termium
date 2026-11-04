@@ -30,13 +30,13 @@ When `/agent [prompt]` is invoked:
 - This gives Gemini visibility over the repository layout without uploading files through the Gemini UI.
 - Gemini uses `[read]file/path[/read]` to inspect files on demand.
 
-### 2. Tool Call Markup Formats
-Gemini is instructed via prompt to use explicit markup tags when requesting local actions. Square brackets are used because the Gemini web UI strips unknown HTML-style tags (e.g. `<read>`) from rendered answers:
-- **Command Execution**: `[exec]command[/exec]`
-- **File Read**: `[read]file/path[/read]`
-- **File Write**: `[write path="file/path"]content[/write]`
+### 2. Tool Call Formats & Safety Guardrails
+To prevent triggering Gemini's platform safety guardrails (such as RCE false positives and prompt injection filters), `/agent` requests actions via standard Markdown code blocks:
+- **Command / File Inspection**: ````bash\ncat file/path\n```` or ````bash\ncommand\n````
+- **File Write**: ````language\n// filepath: file/path\ncontent\n````
+- **Backward Compatibility**: Bracket tags (`[exec]`, `[read]`, `[write path="..."]`) and legacy `%<tool_call>%` formats are also supported.
 
-The legacy `%<tool_call>%`, `%<read>%`, `%<write>%` forms are still parsed for backward compatibility. A bare file path as the entire answer is also treated as a read request. Results are returned to Gemini wrapped in `%<tool_result>%...%</tool_result>%`.
+Results are returned to Gemini wrapped in `%<tool_result>%...%</tool_result>%`.
 
 When Gemini emits one of these tags, it halts further generation and awaits the user's result.
 

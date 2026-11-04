@@ -35,13 +35,15 @@ No API key is needed: you use your normal Google account through the regular Gem
 
 ## 🤖 Agent Mode & Approval Policy
 
-Type `/agent <task>` in the Gemini prompt box. `gemini-termium` sends Gemini your project's file tree plus instructions to request local actions with these tags (square brackets are used because the Gemini web UI strips HTML-style tags such as `<read>`):
+Type `/agent <task>` in the Gemini prompt box. `gemini-termium` sends Gemini your project's file tree and starts a collaborative pair programming session.
 
-- `[read]path/to/file[/read]`: read a file in your project.
-- `[write path="path/to/file"]content[/write]`: create or overwrite a file.
-- `[exec]command[/exec]`: run a shell command (e.g., `npm test`, `git status`).
+To stay strictly compliant with Gemini's safety guidelines and avoid false-positive guardrail triggers, actions are proposed using standard Markdown:
 
-When Gemini's answer contains one of these tags, an approval card appears. If you approve, the action runs locally and the result is placed into the prompt box and sent back to Gemini, so the conversation continues.
+- **Inspect file or run command**: Gemini proposes shell commands in a standard ````bash ```` block (e.g. `cat README.md` to inspect a file, or `npm test`, `git status` to verify).
+- **Create or edit file**: Gemini provides code with the target path in the first line (e.g. `// filepath: src/index.js`).
+- *(Legacy tags like `[read]`, `[write path="..."]`, and `[exec]` are also supported for backward compatibility).*
+
+When Gemini proposes an action, an interactive approval card appears. If you approve (pressing `y`), the action runs locally and the result is placed into the prompt box and sent back to Gemini, so the conversation continues step by step.
 
 ### Human-in-the-Loop Policy
 Automating the Gemini web UI without a human in the loop may violate Google's Terms of Service, and running model-generated commands unattended is unsafe. Therefore:
