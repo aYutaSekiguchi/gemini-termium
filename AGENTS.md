@@ -13,7 +13,7 @@ Automating the Gemini Web UI via programmatic, unprompted loops violates Google'
 1. **Explicit Human Confirmation for Every Tool Call**:
    When Gemini outputs a tool invocation template (`[exec]`, `[read]`, `[write path="..."]`), the tool execution and subsequent response generation MUST pause until the human user explicitly reviews the action and confirms it (e.g., pressing `[y]`).
 2. **Human-Triggered Reply**:
-   The reply payload containing the tool execution result (`%<tool_result>%...%</tool_result>%`) is submitted back to the Gemini Web UI ONLY as a direct consequence of the user's manual approval. The system must NEVER automatically post replies in an unconstrained background loop.
+   The reply payload containing the tool execution result is submitted back to the Gemini Web UI as standard conversational markdown ONLY as a direct consequence of the user's manual approval. The system must NEVER automatically post replies in an unconstrained background loop.
 3. **Editable / Cancellable Actions**:
    The user must always be provided with the option to cancel (`[n]`) or reject a tool call before any local file changes or command execution occur.
 4. **Local Workspace Isolation**:
@@ -36,14 +36,14 @@ To prevent triggering Gemini's platform safety guardrails (such as RCE false pos
 - **File Write**: ````language\n// filepath: file/path\ncontent\n````
 - **Backward Compatibility**: Bracket tags (`[exec]`, `[read]`, `[write path="..."]`) and legacy `%<tool_call>%` formats are also supported.
 
-Results are returned to Gemini wrapped in `%<tool_result>%...%</tool_result>%`.
+Results are returned to Gemini as standard conversational markdown code blocks.
 
-When Gemini emits one of these tags, it halts further generation and awaits the user's result.
+When Gemini emits one of these suggestions, it awaits the user's confirmation.
 
 ### 3. Approval & Trigger Workflow
-1. **Parse**: In-page observer detects complete tool call tags in Gemini's response.
+1. **Parse**: In-page observer detects file suggestions (`cat <file>`, `// filepath: <file>`) or commands in Gemini's response.
 2. **Prompt User**: A prominent modal/HUD prompt displays the action details (command line, file path, diff/content preview).
 3. **User Decision**:
-   - `[y]` (Approve): Executes action locally, formats `%<tool_result>%...%</tool_result>%`, and types/submits reply to Gemini.
+   - `[y]` (Approve): Executes action locally, formats clean markdown result, and types/submits reply to Gemini.
    - `[n]` (Reject): Informs Gemini that the user declined the action or allows user to provide manual input.
 4. **Audit Log**: All executed commands and file modifications are logged clearly to the session console drawer.

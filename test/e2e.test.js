@@ -412,10 +412,9 @@ console.log("hello from e2e test");</code></pre>
     // Verify prompt input contains human-triggered tool result formatted for reply
     const editorResult = await pollUntil(async () => {
       const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('%<tool_result>%') ? text : null;
+      return text && text.includes('Successfully saved') ? text : null;
     }, 5000);
-    assert.match(editorResult, /%<tool_result>%/);
-    assert.match(editorResult, /Successfully applied 1 file change/);
+    assert.match(editorResult, /Successfully saved 1 file change/);
   });
 
   it('8. Intercepts /agent command and auto-injects workspace file tree into prompt', async () => {
@@ -448,7 +447,7 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
 
     assert.ok(editorContent.includes('tree_sample.js'), 'Prompt must contain workspace file tree');
-    assert.ok(editorContent.includes('```bash'), 'Prompt must contain bash instruction');
+    assert.ok(editorContent.includes('cat path/to/file') || editorContent.includes('pair programmer'), 'Prompt must contain pair programmer instructions');
     assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });
 
@@ -490,11 +489,10 @@ console.log("hello from e2e test");</code></pre>
     // Verify prompt input contains the file contents formatted for reply
     const editorResult = await pollUntil(async () => {
       const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('[File: README.md]') ? text : null;
+      return text && text.includes('README.md') ? text : null;
     }, 5000);
 
-    assert.ok(editorResult.includes('%<tool_result>%'));
-    assert.ok(editorResult.includes('[File: README.md]'));
+    assert.ok(editorResult.includes('README.md'));
     assert.ok(editorResult.includes('Safe TOS Compliant Execution'));
     assert.ok(!editorResult.includes('zsh:fg:1'), 'Must not execute zsh job control fg error');
   });
@@ -537,10 +535,10 @@ console.log("hello from e2e test");</code></pre>
     // Verify prompt input contains the file contents formatted for reply
     const editorResult = await pollUntil(async () => {
       const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('[File: package.json]') ? text : null;
+      return text && text.includes('package.json') ? text : null;
     }, 5000);
 
-    assert.ok(editorResult.includes('%<tool_result>%'));
+    assert.ok(editorResult.includes('package.json'));
     assert.ok(editorResult.includes('termium-agent-test'));
   });
 
@@ -624,8 +622,8 @@ console.log("hello from e2e test");</code></pre>
       return text && text.includes('dom_bash_success') ? text : null;
     }, 5000);
 
-    assert.ok(editorResult.includes('%<tool_result>%'));
     assert.ok(editorResult.includes('dom_bash_success'));
+    assert.ok(editorResult.includes('terminal output'));
   });
 
   it('13. Guards untagged bare response fallback against premature evaluation during active streaming', async () => {
@@ -893,14 +891,14 @@ console.log("hello from e2e test");</code></pre>
           };
         })()
       `);
-      if (!state.hasCard && state.text && state.text.includes('User rejected this tool call')) {
+      if (!state.hasCard && state.text && state.text.includes('decided not to execute')) {
         return state.text;
       }
       return null;
     }, 5000);
 
     assert.ok(editorResult, 'Modal must close and rejection text must be populated via "n" key');
-    assert.match(editorResult, /User rejected this tool call/);
+    assert.match(editorResult, /decided not to execute/);
   });
 
   it('17. Approves tool call via pointerdown event on Approve button', async () => {

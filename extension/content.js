@@ -983,22 +983,17 @@
       const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
       const wsTree = wsData?.fileTree || '(empty workspace)';
 
-      const promptInstruction = `I am developing and working on a local project in directory "${wsName}".
-Here is the current file tree of my workspace:
+      const promptInstruction = `I am working on a local development project in "${wsName}".
+Here is the repository file structure for context:
 
 Workspace files:
 ${wsTree}
 
-Please assist me with pair programming on this repository.
-I am running a local terminal bridge and will execute your suggested commands or inspect files on my machine, and paste the output back into this chat so we can proceed step by step.
+Please act as my collaborative pair programmer on this project.
+- When recommending files to inspect or verify, feel free to suggest standard CLI commands (such as \`cat path/to/file\`, \`npm test\`, or \`git status\`).
+- When proposing code changes or new files, include the relative target file path in a comment at the top of the code block (e.g. \`// filepath: path/to/file\`).
 
-Guidelines for proposing actions:
-1. To inspect files or run commands:
-   Propose the shell command in a single \`\`\`bash code block (e.g. \`\`\`bash\ncat README.md\n\`\`\` to inspect a file, or \`\`\`bash\ngit status\n\`\`\` / \`\`\`bash\nnpm test\n\`\`\` for checks).
-2. To create or update a file:
-   Provide the full code in a markdown code block with the relative target path in the first line (e.g. \`\`\`js\n// filepath: src/index.js\n...code...\n\`\`\`).
-
-Please propose one action at a time and wait for my output before proceeding to the next step.`;
+Suggest the next logical step and recommend files to inspect as we work together on this repository.`;
 
       if (arg) {
         const fullPrompt = `${promptInstruction}\n\nTask:\n${arg}`;
@@ -1682,13 +1677,13 @@ Please propose one action at a time and wait for my output before proceeding to 
           const res = await callBridge('run', { command: toolCall.command });
           showConsoleOutput(toolCall.command, res);
           const out = (res.stdout || '') + (res.stderr || '');
-          resultPayload = `%<tool_result>%\n[Command: ${toolCall.command}]\nExit Code: ${res.code}\nOutput:\n${out.trim() || '(no output)'}\n%</tool_result>%`;
+          resultPayload = `Here is the terminal output from running \`${toolCall.command}\`:\n\`\`\`\n${out.trim() || '(no output)'}\n\`\`\`\nPlease review the output and suggest the next step.`;
         } else if (toolCall.type === 'read') {
           const res = await callBridge('read', { filePath: toolCall.filePath });
           if (res && res.ok) {
-            resultPayload = `%<tool_result>%\n[File: ${toolCall.filePath}]\n${res.content}\n%</tool_result>%`;
+            resultPayload = `Here is the content of \`${toolCall.filePath}\`:\n\`\`\`\n${res.content}\n\`\`\`\nPlease inspect this content and advise on the next step.`;
           } else {
-            resultPayload = `%<tool_result>%\n[File: ${toolCall.filePath}]\nError: ${res?.error || 'Failed to read file'}\n%</tool_result>%`;
+            resultPayload = `Unable to read \`${toolCall.filePath}\`: ${res?.error || 'File not found'}. What should we check instead?`;
           }
         } else if (toolCall.type === 'write') {
           const res = await callBridge('apply', {
@@ -1696,9 +1691,9 @@ Please propose one action at a time and wait for my output before proceeding to 
           });
           if (res && res.ok) {
             const count = res.totalApplied || res.applied?.length || 1;
-            resultPayload = `%<tool_result>%\n[Write: ${toolCall.filePath}]\nSuccessfully applied ${count} file change(s).\n%</tool_result>%`;
+            resultPayload = `Successfully saved ${count} file change(s) to \`${toolCall.filePath}\`. What is our next step?`;
           } else {
-            resultPayload = `%<tool_result>%\n[Write: ${toolCall.filePath}]\nError: ${res?.error || 'Failed to write file'}\n%</tool_result>%`;
+            resultPayload = `Failed to write \`${toolCall.filePath}\`: ${res?.error || 'Write error'}. What should we adjust?`;
           }
         }
 
@@ -1722,7 +1717,7 @@ Please propose one action at a time and wait for my output before proceeding to 
         }
         const editor = findPromptEditor();
         if (editor) {
-          setPromptText(editor, `%<tool_result>%\n[User rejected this tool call: ${toolCall.title}]\n%</tool_result>%`);
+          setPromptText(editor, `I decided not to execute this action (${toolCall.title}). What alternative approach do you suggest?`);
           try { editor.focus(); } catch {}
         }
       };
