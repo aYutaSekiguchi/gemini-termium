@@ -152,8 +152,7 @@ console.log("hello from e2e test");</code></pre>
       `--remote-debugging-port=${cdpPort}`,
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-web-security',
-      '--allow-running-insecure-content',
+      '--disable-blink-features=AutomationControlled',
       `http://127.0.0.1:${webPort}`
     ]);
 

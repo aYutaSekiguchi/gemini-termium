@@ -12,6 +12,35 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const EXTENSION_DIR = path.resolve(PROJECT_ROOT, 'extension');
 
+export function buildChromeArgs({ profileDir, cdpPort, isHeadless = true } = {}) {
+  const userAgent = process.platform === 'darwin'
+    ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+  const chromeArgs = [
+    `--user-data-dir=${profileDir}`,
+    `--remote-debugging-port=${cdpPort}`,
+    `--load-extension=${EXTENSION_DIR}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-blink-features=AutomationControlled',
+    `--user-agent=${userAgent}`,
+    '--window-size=1280,800',
+    // Memory optimizations
+    '--disable-breakpad',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--js-flags=--max-old-space-size=256',
+    '--app=https://gemini.google.com'
+  ];
+
+  if (isHeadless) {
+    chromeArgs.unshift('--headless=new');
+  }
+
+  return chromeArgs;
+}
+
 export async function waitForChromeWsUrl(cdpPort, maxRetries = 40, intervalMs = 150) {
   for (let i = 0; i < maxRetries; i++) {
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -46,31 +75,12 @@ export async function startBackend({
   const activeBridgePort = bridgePort || (await findAvailablePort(45140));
   const activeGrpcPort = grpcPort || (await findAvailablePort(50051));
 
-  // 2. Assemble Chrome args with memory optimization
-  const chromeArgs = [
-    `--user-data-dir=${profileDir}`,
-    `--remote-debugging-port=${activeCdpPort}`,
-    `--load-extension=${EXTENSION_DIR}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-web-security',
-    '--allow-running-insecure-content',
-    '--disable-blink-features=AutomationControlled',
-    // Memory optimizations
-    '--disable-background-networking',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-breakpad',
-    '--disable-component-update',
-    '--disable-domain-reliability',
-    '--disable-sync',
-    '--js-flags=--max-old-space-size=256',
-    '--app=https://gemini.google.com'
-  ];
-
-  if (isHeadless) {
-    chromeArgs.unshift('--headless=new');
-  }
+  // 2. Assemble Chrome args with memory optimization and security integrity
+  const chromeArgs = buildChromeArgs({
+    profileDir,
+    cdpPort: activeCdpPort,
+    isHeadless
+  });
 
   console.log(`✦ Launching Chrome (${isHeadless ? 'headless' : 'desktop window'})...`);
   const chromeProcess = spawn(chromeBin, chromeArgs, {
