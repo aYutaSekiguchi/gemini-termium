@@ -241,7 +241,6 @@ console.log("hello from e2e test");</code></pre>
       })()
     `);
 
-    assert.match(toastMessage, /\/apply/);
     assert.match(toastMessage, /\/run/);
     assert.match(toastMessage, /\/agent/);
 
@@ -309,35 +308,43 @@ console.log("hello from e2e test");</code></pre>
     assert.match(output, /e2e_command_success/);
   });
 
-  it('5. Intercepts /apply and writes code block to local workspace file on disk', async () => {
+  it('5. Intercepts agent write tool call [write path="..."] and writes file to disk upon approval', async () => {
     const targetFilePath = path.join(tmpWorkspaceDir, 'e2e_sample.js');
-    assert.equal(fs.existsSync(targetFilePath), false, 'File should not exist before apply');
+    assert.equal(fs.existsSync(targetFilePath), false, 'File should not exist before write');
 
+    // Simulate Gemini emitting [write path="e2e_sample.js"]...[/write]
     await evaluateInPage(`
       (() => {
-        const ed = document.querySelector('[contenteditable="true"]');
-        while (ed.firstChild) ed.removeChild(ed.firstChild);
-        const p = document.createElement('p');
-        p.textContent = '/apply';
-        ed.appendChild(p);
-
-        const ev = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          bubbles: true,
-          cancelable: true
-        });
-        p.dispatchEvent(ev);
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[write path="e2e_sample.js"]console.log("hello from e2e test");[/write]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
       })()
     `);
 
-    const toastMessage = await pollUntil(async () => {
-      const text = await evaluateInPage(`document.querySelector('.gtw-hud-toast')?.textContent.trim()`);
-      return text && text.includes('Applied 1 file(s): e2e_sample.js') ? text : null;
-    }, 6000);
+    // Verify Human-in-the-Loop card appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('e2e_sample.js'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for [write]');
 
-    assert.match(toastMessage, /Applied 1 file\(s\): e2e_sample\.js/);
+    // User approves
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file is created on disk
+    await pollUntil(async () => fs.existsSync(targetFilePath) ? true : null, 5000);
     assert.equal(fs.existsSync(targetFilePath), true, 'File should now exist on disk');
 
     const fileContent = fs.readFileSync(targetFilePath, 'utf8');
@@ -349,8 +356,7 @@ console.log("hello from e2e test");</code></pre>
       return evaluateInPage(`
         (() => {
           const runBtn = document.querySelector('.gtw-code-btn.run');
-          const applyBtn = document.querySelector('.gtw-code-btn.apply');
-          return Boolean(runBtn && applyBtn);
+          return Boolean(runBtn);
         })()
       `);
     }, 5000);

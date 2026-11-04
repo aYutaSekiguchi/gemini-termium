@@ -18,7 +18,7 @@ test('CLI: --help prints usage and exits cleanly', async () => {
   assert.strictEqual(code, 0);
   assert.ok(stdout.includes('gemini-termium: Cross-Platform'));
   assert.ok(stdout.includes('--login'));
-  assert.ok(stdout.includes('/apply'));
+  assert.ok(stdout.includes('/agent'));
 });
 
 test('CLI: launches backend without reference errors', async (t) => {

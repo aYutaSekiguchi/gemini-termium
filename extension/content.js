@@ -108,7 +108,6 @@
 
   const SLASH_COMMANDS = [
     { command: '/agent', label: '🤖 /agent [prompt]', desc: 'Start autonomous agent with workspace file tree & tools' },
-    { command: '/apply', label: '📁 /apply', desc: 'Apply code diffs to local workspace' },
     { command: '/run', label: '⚡ /run [cmd]', desc: 'Execute shell command on local workspace' },
     { command: '/status', label: 'ℹ️ /status', desc: 'Show workspace connection details' },
     { command: '/help', label: '❓ /help', desc: 'Show slash command list and usage' }
@@ -512,14 +511,14 @@
         setPromptText(editor, '/run ');
         return;
       }
+      if (cmd.command === '/agent') {
+        setPromptText(editor, '/agent ');
+        return;
+      }
 
       clearPromptText(editor);
 
-      if (cmd.command === '/apply') {
-        handleApplyFiles();
-      } else if (cmd.command === '/zip') {
-        handleUploadZip();
-      } else if (cmd.command === '/status') {
+      if (cmd.command === '/status') {
         callBridge('status').then((res) => {
           const name = res?.name || workspaceInfo?.name || 'unknown';
           const loc = res?.cwd || workspaceInfo?.cwd || '';
@@ -527,7 +526,7 @@
         });
       } else if (cmd.command === '/help') {
         callBridge('help');
-        showToast('Commands: /apply (apply code) | /run [cmd] (execute shell) | /zip (attach workspace) | /status', 'info', 7000);
+        showToast('Commands: /agent [prompt] (autonomous agent) | /run [cmd] (execute shell) | /status', 'info', 7000);
       }
     }
 
@@ -906,26 +905,6 @@
     }
 
     // 8. Action handlers
-    async function handleApplyFiles(specificAction = null) {
-      const { fileActions } = extractLatestActions();
-      const actionsToSend = specificAction ? [specificAction] : fileActions;
-
-      const validActions = actionsToSend.filter((a) => Boolean(a.filePath));
-      if (validActions.length === 0) {
-        showToast('⚠ No code block with a detectable file path found to apply.', 'error');
-        return;
-      }
-
-      showToast(`Applying ${validActions.length} file(s) to workspace...`, 'info');
-      const data = await callBridge('apply', { fileActions: validActions });
-      if (data && data.ok) {
-        const names = (data.applied || []).map((a) => a.filePath).join(', ');
-        showToast(`✔ Applied ${data.totalApplied || data.applied?.length || 0} file(s): ${names}`, 'success', 5000);
-      } else {
-        showToast(`Apply failed: ${data?.error || 'Unknown error'}`, 'error');
-      }
-    }
-
     async function handleRunCommand(cmdString = null) {
       let commandToRun = cmdString;
       if (!commandToRun) {
@@ -958,7 +937,7 @@
       const command = parts[0].toLowerCase();
       const arg = parts.slice(1).join(' ').trim();
 
-      if (['/apply', '/run', '/status', '/help', '/agent'].includes(command)) {
+      if (['/run', '/status', '/help', '/agent'].includes(command)) {
         if (e && typeof e.preventDefault === 'function') {
           e.preventDefault();
           e.stopPropagation();
@@ -970,8 +949,6 @@
 
         if (command === '/agent') {
           handleAgentCommand(arg, editor);
-        } else if (command === '/apply') {
-          handleApplyFiles();
         } else if (command === '/run') {
           handleRunCommand(arg || null);
         } else if (command === '/status') {
@@ -982,7 +959,7 @@
           });
         } else if (command === '/help') {
           callBridge('help');
-          showToast('Commands: /agent [prompt] (autonomous agent) | /apply (apply code) | /run [cmd] (execute shell) | /status', 'info', 7000);
+          showToast('Commands: /agent [prompt] (autonomous agent) | /run [cmd] (execute shell) | /status', 'info', 7000);
         }
         return true;
       }
@@ -1198,16 +1175,6 @@ To interact with the local workspace (reading files, writing code, executing com
             handleRunCommand(content.replace(/^\$\s+/gm, '').trim());
           };
           header.appendChild(runBtn);
-        } else if (filePath) {
-          const applyBtn = document.createElement('button');
-          applyBtn.className = 'gtw-code-btn apply';
-          applyBtn.textContent = `📁 Apply to ${filePath.split('/').pop()}`;
-          applyBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleApplyFiles({ filePath, content });
-          };
-          header.appendChild(applyBtn);
         }
       });
     }
