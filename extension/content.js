@@ -995,7 +995,7 @@
       let fullPrompt = '';
       if (targetSkill && targetSkill !== 'none') {
         const taskPart = task ? `${task}\n\n` : '';
-        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}`;
+        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step using structured commands ([read], [exec], or [write]).`;
       } else {
         const taskPart = task ? `\n\nTask:\n${task}` : '\n\nTask:\n';
         fullPrompt = `I am working on a local development project in "${wsName}".
@@ -1005,8 +1005,10 @@ Workspace files:
 ${wsTree}
 
 Please act as my collaborative pair programmer on this project.
-- When recommending files to inspect or verify, feel free to suggest standard CLI commands (such as \`cat path/to/file\`, \`npm test\`, or \`git status\`).
-- When proposing code changes or new files, include the relative target file path in a comment at the top of the code block (e.g. \`// filepath: path/to/file\`).
+When recommending actions, output structured commands:
+- Read file: [read]path/to/file[/read] or \`\`\`bash\ncat path/to/file\n\`\`\`
+- Run command: [exec]command[/exec] or \`\`\`bash\ncommand\n\`\`\`
+- Write file: [write path="path/to/file"]...[/write] or \`\`\`lang\n// filepath: path/to/file\n...code...\n\`\`\`
 
 Suggest the next logical step and recommend files to inspect as we work together on this repository.${taskPart}`;
       }
@@ -1390,6 +1392,27 @@ Suggest the next logical step and recommend files to inspect as we work together
             rawTag: filePath
           };
         }
+
+        // 9. Inline code command fallback (e.g. `cat README.md` or `npm test`): ONLY when complete!
+        const inlineCmdMatch = rawText.match(/`((?:cat|head|tail|less)\s+["']?[a-zA-Z0-9_\-./]+["']?|npm\s+(?:test|run\s+\w+|install)|git\s+(?:status|diff|log|branch)|cargo\s+\w+|pytest\b[^`]*|python\s+[^`]+)`/);
+        if (inlineCmdMatch) {
+          const cmd = sanitizeTagValue(inlineCmdMatch[1]);
+          const catMatch = cmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+          if (catMatch && looksLikeFilePath(catMatch[1])) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath: catMatch[1].replace(/^\.\//, ''),
+              rawTag: inlineCmdMatch[0]
+            };
+          }
+          return {
+            type: 'tool_call',
+            title: 'Execute Shell Command',
+            command: cmd,
+            rawTag: inlineCmdMatch[0]
+          };
+        }
       }
 
       return null;
@@ -1437,13 +1460,7 @@ Suggest the next logical step and recommend files to inspect as we work together
           const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
                            content.match(/^(?:File:\s*)([^\s\n]+)/im);
           if (explicit) {
-            const isExplicitTool = block.hasAttribute('data-tool') ||
-                                   block.classList.contains('agent-tool') ||
-                                   responseEl.hasAttribute('data-agent') ||
-                                   codeBlocks.length === 1;
-            if (isExplicitTool) {
-              writePath = explicit[1];
-            }
+            writePath = explicit[1];
           }
         }
         if (!writePath && block.previousElementSibling) {
@@ -1451,13 +1468,7 @@ Suggest the next logical step and recommend files to inspect as we work together
           const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
                             prevText.match(/(?:file|path|filepath|filename):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
           if (prevMatch && looksLikeFilePath(prevMatch[1])) {
-            const isExplicitTool = block.hasAttribute('data-tool') ||
-                                   block.classList.contains('agent-tool') ||
-                                   responseEl.hasAttribute('data-agent') ||
-                                   codeBlocks.length === 1;
-            if (isExplicitTool) {
-              writePath = prevMatch[1];
-            }
+            writePath = prevMatch[1];
           }
         }
         if (writePath) {
@@ -1474,18 +1485,17 @@ Suggest the next logical step and recommend files to inspect as we work together
 
         // 3. Exec block: ```bash, ```sh, ```exec, ```zsh, ```terminal
         if (['exec', 'tool_call', 'bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(lang)) {
-          // If the block is a generic bash/sh/shell/terminal block, verify it is an intentional tool execution block
-          // (not an explanatory multi-snippet response or normal text with code example)
-          const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
-          const isExplicitTool = isToolLang ||
-                                 block.hasAttribute('data-tool') ||
-                                 block.classList.contains('agent-tool') ||
-                                 responseEl.hasAttribute('data-agent') ||
-                                 codeBlocks.length === 1;
-          if (isExplicitTool) {
-            const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
-            if (rawCmd) {
-              const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+          const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
+          if (rawCmd) {
+            const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+            const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
+            const isExplicitTool = isToolLang ||
+                                   Boolean(catMatch) ||
+                                   block.hasAttribute('data-tool') ||
+                                   block.classList.contains('agent-tool') ||
+                                   responseEl.hasAttribute('data-agent') ||
+                                   codeBlocks.length === 1;
+            if (isExplicitTool) {
               if (catMatch && looksLikeFilePath(catMatch[1])) {
                 return {
                   type: 'read',

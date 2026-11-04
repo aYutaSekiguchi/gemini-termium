@@ -1049,4 +1049,45 @@ console.log("hello from e2e test");</code></pre>
     const content = fs.readFileSync(targetFile, 'utf8');
     assert.equal(content.trim(), 'console.log("natural_write_success");');
   });
+
+  it('20. Detects tool call from inline code block `cat inline-sample.txt` when no fenced block is present', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'inline-sample.txt'), 'inline_code_detection_success');
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        resp.setAttribute('data-complete', 'true');
+        const p = document.createElement('p');
+        p.textContent = 'To check this file, you can run \`cat inline-sample.txt\` in your terminal.';
+        resp.appendChild(p);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting file read from inline backtick command
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('inline-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must detect file read from inline `cat inline-sample.txt`');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file content read from workspace
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('inline_code_detection_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive file content from inline command detection');
+  });
 });
