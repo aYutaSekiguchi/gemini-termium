@@ -1432,4 +1432,68 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
     assert.ok(editorResult, 'Editor must receive command output from run-command: action');
   });
+
+  it('28. Never misidentifies "Bash" decoration header at top of code block as command', async () => {
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+
+        const p = document.createElement('p');
+        p.textContent = 'run-command:';
+
+        const codeBlock = document.createElement('code-block');
+        const header = document.createElement('div');
+        header.className = 'code-block-decoration header-formatted';
+        header.textContent = 'Bash';
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = 'Copy';
+        header.appendChild(copyBtn);
+
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = 'echo "real_bash_command_success"';
+        pre.appendChild(code);
+
+        codeBlock.appendChild(header);
+        codeBlock.appendChild(pre);
+
+        inner.appendChild(p);
+        inner.appendChild(codeBlock);
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal detects the actual command (echo "real_bash_command_success") and NOT "Bash"
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('real_bash_command_success'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must capture the command inside the code block');
+
+    // Verify "Bash" is NOT mistaken as the command
+    const cardText = await evaluateInPage(`document.querySelector('.gtw-agent-approval-card')?.innerText || ''`);
+    assert.doesNotMatch(cardText, /Gemini requested to run this command in your workspace:\s*bash\s*✖/i);
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify command output submitted to editor
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('real_bash_command_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive output from real command');
+  });
 });

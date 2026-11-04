@@ -844,14 +844,24 @@
       const latest = findLatestModelResponse();
       if (!latest) return { fileActions: [], commandActions: [] };
 
+      // Hide UI noise elements in-place on the live DOM so .innerText preserves block layout and line breaks,
+      // and UI artifacts (e.g. language label "Bash" in code header or copy buttons) never pollute rawText
+      const noise = latest.querySelectorAll(
+        'user-query, user-query-content, .user-query, .code-block-decoration, .code-block-header, code-block-decoration, .header-formatted, copy-button, download-button, gem-icon-button, button, message-actions, .buttons-container-v2, .actions-container-v2, .gtw-code-header, .gtw-code-btn'
+      );
+      const hidden = [];
+      for (let i = 0; i < noise.length; i++) {
+        const el = noise[i];
+        hidden.push({ el, prevDisplay: el.style.display });
+        el.style.display = 'none';
+      }
       let rawText = '';
-      const userQueries = latest.querySelectorAll('user-query, user-query-content, .user-query');
-      if (userQueries.length > 0) {
-        const clone = latest.cloneNode(true);
-        clone.querySelectorAll('user-query, user-query-content, .user-query').forEach(u => u.remove());
-        rawText = clone.innerText || clone.textContent || '';
-      } else {
-        rawText = latest.innerText || latest.textContent || '';
+      try {
+        rawText = (latest.innerText || latest.textContent || '').trim();
+      } finally {
+        for (let i = 0; i < hidden.length; i++) {
+          hidden[i].el.style.display = hidden[i].prevDisplay;
+        }
       }
       const fileActions = [];
       const commandActions = [];
@@ -1220,8 +1230,11 @@ Recommend only one action at a time.${taskPart}`;
       // 0c. run-command:\n```...\n```
       const naturalRunCmdRegex = /\b(?:run[-_\s]?command|run)\s*:\s*(?:\r?\n|\s+)(?:```|~~~)(?:[a-zA-Z0-9_\-+]*[\r\n\s]+)?([\s\S]*?)(?:```|~~~)/gi;
       while ((m = naturalRunCmdRegex.exec(rawText)) !== null) {
-        const cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
-        if (cmd) {
+        let cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
+        if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i.test(cmd)) {
+          cmd = sanitizeTagValue(cmd.replace(/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i, ''));
+        }
+        if (cmd && !/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(cmd)) {
           const catMatch = cmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
           if (catMatch && looksLikeFilePath(catMatch[1])) {
             addCandidate('read', 'Read Workspace File', { filePath: catMatch[1].replace(/^\.\//, '') }, m);
@@ -1232,10 +1245,13 @@ Recommend only one action at a time.${taskPart}`;
       }
 
       // 0d. run-command: <inline command> (strictly on the same line)
-      const naturalRunCmdInlineRegex = /\b(?:run[-_\s]?command)[ \t]*:[ \t]*[`'"]?([^\r\n`'"]+)[`'"]?/gi;
+      const naturalRunCmdInlineRegex = /\b(?:run[-_\s]?command)[ \t]*:[ \t]*[`'"]?([^\r\n`]+)[`'"]?/gi;
       while ((m = naturalRunCmdInlineRegex.exec(rawText)) !== null) {
         const cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
         if (cmd && !cmd.startsWith('`') && !cmd.includes('```')) {
+          if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(cmd)) {
+            continue; // Environment label, not an executable command
+          }
           const catMatch = cmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
           if (catMatch && looksLikeFilePath(catMatch[1])) {
             addCandidate('read', 'Read Workspace File', { filePath: catMatch[1].replace(/^\.\//, '') }, m);
@@ -1492,19 +1508,83 @@ Recommend only one action at a time.${taskPart}`;
         return null;
       }
 
-      // Inspect rendered code blocks: pre, code-block, .code-block
-      const codeBlocks = Array.from(responseEl.querySelectorAll('pre, code-block, .code-block'))
-        .filter(b => !b.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container'));
+      function checkSiblingsForRunCmd(el) {
+        let curr = el ? el.previousElementSibling : null;
+        let count = 0;
+        while (curr && count < 4) {
+          const sibText = (curr.textContent || '').trim();
+          if (/(?:run[-_\s]?command|run)\s*:/i.test(sibText)) {
+            return true;
+          }
+          curr = curr.previousElementSibling;
+          count++;
+        }
+        return false;
+      }
+
+      function findSavePathInSiblings(el) {
+        let curr = el ? el.previousElementSibling : null;
+        let count = 0;
+        while (curr && count < 4) {
+          const sibText = (curr.textContent || '').trim();
+          const saveMatch = sibText.match(/(?:save|save-to|save_to|file|path|filepath|filename)\s*:?\s*[`'"<]?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`'">]?/i) ||
+                            sibText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/);
+          if (saveMatch && looksLikeFilePath(saveMatch[1])) {
+            return saveMatch[1];
+          }
+          curr = curr.previousElementSibling;
+          count++;
+        }
+        return null;
+      }
+
+      // Inspect rendered code blocks: code-block, .code-block, pre
+      const codeBlocks = Array.from(responseEl.querySelectorAll('code-block, .code-block, pre'))
+        .filter(b => !b.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container'))
+        .filter(b => !(b.tagName.toLowerCase() === 'pre' && b.closest('code-block, .code-block')));
+
       for (const block of codeBlocks) {
-        const codeElem = block.querySelector('code') || block;
-        const content = (codeElem.innerText || codeElem.textContent || '').trim();
+        const codeElem = block.querySelector('code') || block.querySelector('pre') || block;
+        let content = '';
+        if (codeElem === block || block.matches('code-block, .code-block')) {
+          const bClone = block.cloneNode(true);
+          bClone.querySelectorAll('.code-block-decoration, .code-block-header, .header-formatted, copy-button, download-button, gem-icon-button, button').forEach(el => el.remove());
+          const target = bClone.querySelector('code') || bClone.querySelector('pre') || bClone;
+          content = (target.innerText || target.textContent || '').trim();
+        } else {
+          content = (codeElem.innerText || codeElem.textContent || '').trim();
+        }
         if (!content) continue;
+
+        // If content starts with a solitary environment name line (e.g. "bash\n" or "sh\n") that leaked from a header
+        if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i.test(content)) {
+          content = content.replace(/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i, '').trim();
+        }
+        // If content is ONLY a bare shell environment name, skip it
+        if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(content)) {
+          continue;
+        }
 
         const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
         const langMatch = classes.match(/(?:language|lang)-(?:\[)?([a-z0-9_+-]+)\]?/i) ||
                           block.getAttribute('data-language');
         const rawLang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
-        const lang = rawLang.replace(/^[\[<]+|[\]>]+$/g, '').trim();
+
+        // Also check Gemini's .code-block-decoration / .code-block-header for environment name (e.g. "Bash")
+        let headerLang = '';
+        const headerEl = block.closest('code-block, .code-block')?.querySelector('.code-block-decoration, .code-block-header, .header-formatted') ||
+                         block.querySelector('.code-block-decoration, .code-block-header, .header-formatted') ||
+                         block.parentElement?.querySelector('.code-block-decoration, .code-block-header, .header-formatted');
+        if (headerEl) {
+          const hClone = headerEl.cloneNode(true);
+          hClone.querySelectorAll('button, gem-icon-button, copy-button, download-button').forEach(b => b.remove());
+          const hText = (hClone.innerText || hClone.textContent || '').trim().toLowerCase();
+          if (hText && /^[a-z0-9_+-]+$/i.test(hText)) {
+            headerLang = hText;
+          }
+        }
+
+        const lang = (rawLang || headerLang).replace(/^[\[<]+|[\]>]+$/g, '').trim();
 
         // 0. Inner structured tags inside rendered code block (e.g. ```[read]file[/read]``` rendered into <pre><code>)
         const innerBracketWrite = content.match(/\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/i);
@@ -1539,7 +1619,7 @@ Recommend only one action at a time.${taskPart}`;
                                  content.match(/\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/i);
         if (innerBracketExec) {
           const rawCmd = sanitizeTagValue(innerBracketExec[1]);
-          if (rawCmd) {
+          if (rawCmd && !/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(rawCmd)) {
             if (looksLikeFilePath(rawCmd)) {
               return {
                 type: 'read',
@@ -1588,18 +1668,15 @@ Recommend only one action at a time.${taskPart}`;
           }
         }
         if (!writePath) {
-          let sibling = block.previousElementSibling || (block.parentElement && block.parentElement !== responseEl ? block.parentElement.previousElementSibling : null);
-          let count = 0;
-          while (sibling && count < 3) {
-            const sibText = (sibling.textContent || '').trim();
-            const saveMatch = sibText.match(/(?:save|save-to|save_to|file|path|filepath|filename)\s*:?\s*[`'"<]?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`'">]?/i) ||
-                              sibText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/);
-            if (saveMatch && looksLikeFilePath(saveMatch[1])) {
-              writePath = saveMatch[1];
-              break;
+          writePath = findSavePathInSiblings(block);
+          if (!writePath) {
+            const container = block.closest('code-block, .code-block, response-element');
+            if (container && container !== responseEl) {
+              writePath = findSavePathInSiblings(container);
             }
-            sibling = sibling.previousElementSibling;
-            count++;
+          }
+          if (!writePath && block.parentElement && block.parentElement !== responseEl) {
+            writePath = findSavePathInSiblings(block.parentElement);
           }
         }
         if (writePath) {
@@ -1615,22 +1692,23 @@ Recommend only one action at a time.${taskPart}`;
         }
 
         // 3. Preceded by run-command: block (supports bare code blocks without language attribute)
-        let isPrecededByRunCmd = false;
-        let sib = block.previousElementSibling || (block.parentElement && block.parentElement !== responseEl ? block.parentElement.previousElementSibling : null);
-        let sc = 0;
-        while (sib && sc < 3) {
-          const sibText = (sib.textContent || '').trim();
-          if (/(?:run[-_\s]?command|run)\s*:/i.test(sibText)) {
-            isPrecededByRunCmd = true;
-            break;
+        let isPrecededByRunCmd = checkSiblingsForRunCmd(block);
+        if (!isPrecededByRunCmd) {
+          const container = block.closest('code-block, .code-block, response-element');
+          if (container && container !== responseEl) {
+            isPrecededByRunCmd = checkSiblingsForRunCmd(container);
           }
-          sib = sib.previousElementSibling;
-          sc++;
+        }
+        if (!isPrecededByRunCmd && block.parentElement && block.parentElement !== responseEl) {
+          isPrecededByRunCmd = checkSiblingsForRunCmd(block.parentElement);
         }
 
         if (isPrecededByRunCmd) {
-          const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
-          if (rawCmd) {
+          let rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
+          if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i.test(rawCmd)) {
+            rawCmd = sanitizeTagValue(rawCmd.replace(/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i, ''));
+          }
+          if (rawCmd && !/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(rawCmd)) {
             const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
             if (catMatch && looksLikeFilePath(catMatch[1])) {
               return {
@@ -1659,8 +1737,11 @@ Recommend only one action at a time.${taskPart}`;
 
         // 4. Exec block: ```bash, ```sh, ```exec, ```zsh, ```terminal
         if (['exec', 'tool_call', 'bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(lang)) {
-          const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
-          if (rawCmd) {
+          let rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
+          if (/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i.test(rawCmd)) {
+            rawCmd = sanitizeTagValue(rawCmd.replace(/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)\r?\n/i, ''));
+          }
+          if (rawCmd && !/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(rawCmd)) {
             const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
             const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
 
@@ -1750,14 +1831,24 @@ Recommend only one action at a time.${taskPart}`;
       }
 
       const isComplete = isResponseComplete(latest);
+      // Hide UI noise elements in-place on the live DOM so .innerText preserves block layout and line breaks,
+      // and UI artifacts (e.g. language label "Bash" in code header or copy buttons) never pollute rawText
+      const noise = latest.querySelectorAll(
+        'user-query, user-query-content, .user-query, .code-block-decoration, .code-block-header, code-block-decoration, .header-formatted, copy-button, download-button, gem-icon-button, button, message-actions, .buttons-container-v2, .actions-container-v2, .gtw-code-header, .gtw-code-btn'
+      );
+      const hidden = [];
+      for (let i = 0; i < noise.length; i++) {
+        const el = noise[i];
+        hidden.push({ el, prevDisplay: el.style.display });
+        el.style.display = 'none';
+      }
       let rawText = '';
-      const userQueries = latest.querySelectorAll('user-query, user-query-content, .user-query');
-      if (userQueries.length > 0) {
-        const clone = latest.cloneNode(true);
-        clone.querySelectorAll('user-query, user-query-content, .user-query').forEach(u => u.remove());
-        rawText = clone.innerText || clone.textContent || '';
-      } else {
-        rawText = latest.innerText || latest.textContent || '';
+      try {
+        rawText = (latest.innerText || latest.textContent || '').trim();
+      } finally {
+        for (let i = 0; i < hidden.length; i++) {
+          hidden[i].el.style.display = hidden[i].prevDisplay;
+        }
       }
 
       // 1. First parse structured text tags with enclosing block priority
