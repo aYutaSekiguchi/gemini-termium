@@ -1282,4 +1282,125 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
     assert.ok(editorResult, 'Editor must receive file content from assistant model response');
   });
+
+  it('25. Detects natural "send-me: <file>" file request and reads file upon approval', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'adhd-send-sample.json'), '{"adhd": "send_me_success"}');
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'To check your settings:\\n\\nsend-me: adhd-send-sample.json';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting file read from "send-me:"
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('adhd-send-sample.json'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for send-me: request');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file content read from workspace
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('send_me_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive file content from send-me: request');
+  });
+
+  it('26. Detects natural "save: <file>" followed by code block and writes file upon approval', async () => {
+    const targetFile = path.join(tmpWorkspaceDir, 'adhd-save-sample.js');
+    if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'save: adhd-save-sample.js\\n\`\`\`javascript\\nconsole.log("adhd_save_payload");\\n\`\`\`';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting write from "save:"
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('adhd-save-sample.js'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for save: action');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file written to disk
+    await pollUntil(async () => fs.existsSync(targetFile) ? true : null, 5000);
+    assert.equal(fs.existsSync(targetFile), true);
+    const content = fs.readFileSync(targetFile, 'utf8');
+    assert.equal(content.trim(), 'console.log("adhd_save_payload");');
+  });
+
+  it('27. Detects natural "run-command:" followed by code block and executes command upon approval', async () => {
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'run-command:\\n\`\`\`bash\\necho "adhd_run_success"\\n\`\`\`';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears detecting command from "run-command:"
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('adhd_run_success'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for run-command: action');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify command output submitted to editor
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('adhd_run_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive command output from run-command: action');
+  });
 });

@@ -1028,22 +1028,20 @@
       let fullPrompt = '';
       if (targetSkill && targetSkill !== 'none') {
         const taskPart = task ? `${task}\n\n` : '';
-        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step using code snippets (e.g. \`\`\`[read]...[/read]\`\`\` or \`\`\`[exec]...[/exec]\`\`\`).`;
+        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step using direct action requests (send-me: <file>, save: <file>, or run-command:).`;
       } else {
         const taskPart = task ? `\n\nTask:\n${task}` : '\n\nTask:\n';
-        fullPrompt = `I am working on a local development project in "${wsName}".
-Here is the repository file structure for context:
+        fullPrompt = `I have ADHD and high cognitive sensitivity. Long explanations cause cognitive fatigue. Please skip all pleasantries and theoretical background. Provide only direct conclusions and action items.
 
-Workspace files:
+Workspace files (${wsName}):
 ${wsTree}
 
-Please act as my collaborative pair programmer on this project.
-When recommending actions, output structured commands inside code snippets:
-- Read file: \`\`\`[read]...\`\`\` or \`\`\`bash\ncat <filepath>\n\`\`\`
-- Run command: \`\`\`[exec]...\`\`\` or \`\`\`bash\n<command>\n\`\`\`
-- Write file: \`\`\`[write path="..."]\n...\n[/write]\`\`\` or \`\`\`lang\n// filepath: <filepath>\n...code...\n\`\`\`
+Formatting rules:
+- To inspect a file: send-me: <filepath>
+- To save code: save: <filepath> followed by fenced code block
+- To suggest terminal command: run-command: followed by fenced code block
 
-Suggest the next logical step and recommend files to inspect as we work together on this repository.${taskPart}`;
+Recommend only one action at a time.${taskPart}`;
       }
 
       if (task) {
@@ -1230,7 +1228,7 @@ Suggest the next logical step and recommend files to inspect as we work together
       if (!val) return '';
       return val
         .trim()
-        .replace(/^[%`'"\s]+|[%`'"\s]+$/g, '')
+        .replace(/^[%`'"<>\s]+|[%`'"<>\s]+$/g, '')
         .trim();
     }
 
@@ -1289,10 +1287,59 @@ Suggest the next logical step and recommend files to inspect as we work together
         });
       }
 
-      // 0a. Fenced Code Snippet Write with explicit [/write]:
+      let m;
+
+      // 0. Natural Low-Cognitive / Human-Action Protocol (send-me:, save:, run-command:)
+      // 0a. save: <filepath>\n```...\n```
+      const naturalSaveRegex = /\b(?:save|save[-_\s]?to)\s*:?\s*[`'"<]?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+|[^`'">\r\n\s]+)[`'">]?\s*:?\s*(?:\r?\n|\s+)(?:```|~~~)[a-zA-Z0-9_\-+]*[\r\n\s]+([\s\S]*?)(?:```|~~~)/gi;
+      while ((m = naturalSaveRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        const content = (m[2] || '').trim();
+        if (filePath && looksLikeFilePath(filePath)) {
+          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
+        }
+      }
+
+      // 0b. send-me: <filepath>
+      const naturalSendMeRegex = /\b(?:send[-_\s]?me|sendme)\s*:\s*[`'"<]?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+|[^`'">\r\n\s]+)[`'">]?/gi;
+      while ((m = naturalSendMeRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        if (filePath && looksLikeFilePath(filePath)) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+
+      // 0c. run-command:\n```...\n```
+      const naturalRunCmdRegex = /\b(?:run[-_\s]?command|run)\s*:\s*(?:\r?\n|\s+)(?:```|~~~)(?:[a-zA-Z0-9_\-+]*[\r\n\s]+)?([\s\S]*?)(?:```|~~~)/gi;
+      while ((m = naturalRunCmdRegex.exec(rawText)) !== null) {
+        const cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
+        if (cmd) {
+          const catMatch = cmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+          if (catMatch && looksLikeFilePath(catMatch[1])) {
+            addCandidate('read', 'Read Workspace File', { filePath: catMatch[1].replace(/^\.\//, '') }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: cmd }, m);
+          }
+        }
+      }
+
+      // 0d. run-command: <inline command>
+      const naturalRunCmdInlineRegex = /\b(?:run[-_\s]?command)\s*:\s*[`'"]?([^\r\n`'"]+)[`'"]?/gi;
+      while ((m = naturalRunCmdInlineRegex.exec(rawText)) !== null) {
+        const cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
+        if (cmd && !cmd.startsWith('`') && !cmd.includes('```')) {
+          const catMatch = cmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+          if (catMatch && looksLikeFilePath(catMatch[1])) {
+            addCandidate('read', 'Read Workspace File', { filePath: catMatch[1].replace(/^\.\//, '') }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: cmd }, m);
+          }
+        }
+      }
+
+      // 1a. Fenced Code Snippet Write with explicit [/write]:
       // ```[write path="..."]...[/write]``` or ```write path="..."\n...[/write]```
       const fencedWriteWithCloseRegex = /(?:```|~~~)(?:\[write\s+path=["']?([^"'\]\n]+)["']?\]|write\s+path=["']?([^"'\n]+)["']?)([\s\S]*?)\[\/write\]\s*(?:```|~~~)?/gi;
-      let m;
       while ((m = fencedWriteWithCloseRegex.exec(rawText)) !== null) {
         const filePath = sanitizeTagValue(m[1] || m[2]);
         const content = (m[3] || '').trim();
@@ -1632,12 +1679,19 @@ Suggest the next logical step and recommend files to inspect as we work together
             writePath = explicit[1];
           }
         }
-        if (!writePath && block.previousElementSibling) {
-          const prevText = (block.previousElementSibling.textContent || '').trim();
-          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
-                            prevText.match(/(?:file|path|filepath|filename):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
-          if (prevMatch && looksLikeFilePath(prevMatch[1])) {
-            writePath = prevMatch[1];
+        if (!writePath) {
+          let sibling = block.previousElementSibling;
+          let count = 0;
+          while (sibling && count < 3) {
+            const sibText = (sibling.textContent || '').trim();
+            const saveMatch = sibText.match(/(?:save|save-to|save_to|file|path|filepath|filename)\s*:?\s*[`'"<]?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`'">]?/i) ||
+                              sibText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/);
+            if (saveMatch && looksLikeFilePath(saveMatch[1])) {
+              writePath = saveMatch[1];
+              break;
+            }
+            sibling = sibling.previousElementSibling;
+            count++;
           }
         }
         if (writePath) {
@@ -1658,8 +1712,23 @@ Suggest the next logical step and recommend files to inspect as we work together
           if (rawCmd) {
             const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
             const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
+
+            let isPrecededByRunCmd = false;
+            let sib = block.previousElementSibling;
+            let sc = 0;
+            while (sib && sc < 3) {
+              const sibText = (sib.textContent || '').trim();
+              if (/(?:run[-_\s]?command|run)\s*:/i.test(sibText)) {
+                isPrecededByRunCmd = true;
+                break;
+              }
+              sib = sib.previousElementSibling;
+              sc++;
+            }
+
             const isExplicitTool = isToolLang ||
                                    Boolean(catMatch) ||
+                                   isPrecededByRunCmd ||
                                    block.hasAttribute('data-tool') ||
                                    block.classList.contains('agent-tool') ||
                                    responseEl.hasAttribute('data-agent') ||

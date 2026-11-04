@@ -37,11 +37,12 @@ No API key is needed: you use your normal Google account through the regular Gem
 
 Type `/agent <task>` in the Gemini prompt box. `gemini-termium` sends Gemini your project's file tree and starts a collaborative pair programming session.
 
-To stay strictly compliant with Gemini's safety guidelines and avoid false-positive guardrail triggers, actions are proposed using standard Markdown:
+To stay strictly compliant with Gemini's safety guidelines and avoid false-positive guardrail triggers, actions are proposed using an ADHD / low-cognitive-load natural communication format:
 
-- **Inspect file or run command**: Gemini proposes shell commands in a standard ````bash ```` block (e.g. `cat README.md` to inspect a file, or `npm test`, `git status` to verify).
-- **Create or edit file**: Gemini provides code with the target path in the first line (e.g. `// filepath: src/index.js`).
-- *(Legacy tags like `[read]`, `[write path="..."]`, and `[exec]` are also supported for backward compatibility).*
+- **Request file inspection**: `send-me: <filepath>` (Gemini politely asks you to provide the file).
+- **Create or edit file**: `save: <filepath>` followed immediately by a fenced code block with full content.
+- **Run command**: `run-command:` followed by a fenced code block with the command for you to run.
+- *(Natural markdown like `cat README.md`, `// filepath:`, and legacy tags are also supported for backward compatibility).*
 
 When Gemini proposes an action, an interactive approval card appears. If you approve (pressing `y`), the action runs locally and the result is placed into the prompt box and sent back to Gemini, so the conversation continues step by step.
 
