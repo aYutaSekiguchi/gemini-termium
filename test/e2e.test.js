@@ -691,4 +691,92 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
     assert.equal(cardOnCompletion, true, 'Modal must trigger for completed bare file response');
   });
+
+  it('14. Resolves real editor excluding .ql-clipboard and clicks send button upon approval', async () => {
+    // Write sample file
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'test-lib.js'), 'export const hello = "world";');
+
+    // Setup realistic Gemini DOM by adding .ql-clipboard to existing rich-textarea and tracking submit click
+    await evaluateInPage(`
+      (() => {
+        window.__TEST_SUBMIT_CLICKED__ = false;
+
+        const rich = document.querySelector('rich-textarea');
+        const realEditor = rich.querySelector('[contenteditable="true"]');
+        realEditor.classList.add('ql-editor');
+        realEditor.innerHTML = '<p><br></p>';
+
+        // Append hidden clipboard inside rich-textarea AFTER real editor
+        let clip = rich.querySelector('.ql-clipboard');
+        if (!clip) {
+          clip = document.createElement('div');
+          clip.className = 'ql-clipboard';
+          clip.setAttribute('contenteditable', 'true');
+          clip.setAttribute('tabindex', '-1');
+          rich.appendChild(clip);
+        }
+        clip.innerHTML = '';
+
+        // Attach listener to send button
+        const sendBtn = document.querySelector('button[aria-label="Send message"], [data-test-id="send-button"]');
+        if (sendBtn) {
+          sendBtn.onclick = () => {
+            window.__TEST_SUBMIT_CLICKED__ = true;
+          };
+        }
+
+        // Simulate Gemini tool call
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[read]test-lib.js[/read]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('test-lib.js'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear');
+
+    // Click approve
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify real editor gets the content and clipboard does NOT, and send button was clicked
+    const verifyResult = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const real = document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)');
+          const clip = document.querySelector('rich-textarea .ql-clipboard');
+          const submitted = window.__TEST_SUBMIT_CLICKED__;
+
+          if (real && real.textContent.includes('test-lib.js') && real.textContent.includes('hello = "world"') && submitted) {
+            return {
+              ok: true,
+              clipEmpty: clip.textContent.trim() === '',
+              realText: real.textContent,
+              submitted
+            };
+          }
+          return null;
+        })()
+      `);
+    }, 5000);
+
+    assert.ok(verifyResult, 'Must populate real editor and click submit button');
+    assert.equal(verifyResult.clipEmpty, true, '.ql-clipboard must remain untouched');
+    assert.equal(verifyResult.submitted, true, 'Send button must be clicked');
+  });
 });

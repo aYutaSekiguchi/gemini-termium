@@ -623,33 +623,56 @@
     checkConnection();
 
     // 6. Robust DOM input detection
+    function isUsableEditor(el) {
+      if (!el) return false;
+      if (el.classList && el.classList.contains('ql-clipboard')) return false;
+      if (el.getAttribute && el.getAttribute('tabindex') === '-1' && !el.classList.contains('ql-editor')) return false;
+      return true;
+    }
+
     function findPromptEditor(e = null) {
       if (e && e.target) {
         const target = e.target;
         if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
           return target;
         }
-        if (target.isContentEditable) {
-          return target.closest('[contenteditable="true"]') || target;
+        if (target.isContentEditable && isUsableEditor(target)) {
+          const editorParent = target.closest('.ql-editor:not(.ql-clipboard)') || target.closest('[contenteditable="true"]:not(.ql-clipboard)');
+          return editorParent || target;
         }
       }
 
       const active = document.activeElement;
-      if (active) {
+      if (active && isUsableEditor(active)) {
         if (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT') {
           return active;
         }
         if (active.isContentEditable) {
-          return active.closest('[contenteditable="true"]') || active;
+          const editorParent = active.closest('.ql-editor:not(.ql-clipboard)') || active.closest('[contenteditable="true"]:not(.ql-clipboard)');
+          return editorParent || active;
         }
       }
 
-      // Search for visible or available editable area in chat container
+      // Priority 1: Gemini Angular custom elements (rich-textarea)
+      const richEditor = document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')
+        || document.querySelector('rich-textarea div[contenteditable="true"]:not(.ql-clipboard)');
+      if (richEditor) {
+        return richEditor;
+      }
+
+      // Priority 2: Standard Quill editor or textarea
+      const qlEditor = document.querySelector('.ql-editor:not(.ql-clipboard)');
+      if (qlEditor) {
+        return qlEditor;
+      }
+
+      // Priority 3: Fallback contenteditable or textarea
       const candidates = Array.from(document.querySelectorAll(
-        '[contenteditable="true"], rich-textarea div[contenteditable], .ql-editor, textarea'
-      ));
+        '[contenteditable="true"]:not(.ql-clipboard), textarea, input[type="text"]'
+      )).filter(isUsableEditor);
+
       if (candidates.length > 0) {
-        return candidates[candidates.length - 1];
+        return candidates[0];
       }
       return null;
     }
@@ -667,20 +690,33 @@
       if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
         editor.value = text;
         editor.dispatchEvent(new Event('input', { bubbles: true }));
+        editor.dispatchEvent(new Event('change', { bubbles: true }));
         return;
       }
 
       while (editor.firstChild) {
         editor.removeChild(editor.firstChild);
       }
-      const p = document.createElement('p');
-      p.textContent = text;
-      editor.appendChild(p);
+
+      const lines = String(text || '').split('\n');
+      for (const line of lines) {
+        const p = document.createElement('p');
+        if (line) {
+          p.textContent = line;
+        } else {
+          p.appendChild(document.createElement('br'));
+        }
+        editor.appendChild(p);
+      }
+
+      if (editor.classList) {
+        editor.classList.remove('ql-blank');
+      }
 
       try {
         editor.focus();
         const range = document.createRange();
-        range.selectNodeContents(p);
+        range.selectNodeContents(editor);
         range.collapse(false);
         const sel = window.getSelection();
         sel.removeAllRanges();
@@ -688,6 +724,8 @@
       } catch {}
 
       editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     function clearPromptText(editor) {
@@ -695,6 +733,7 @@
       if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
         editor.value = '';
         editor.dispatchEvent(new Event('input', { bubbles: true }));
+        editor.dispatchEvent(new Event('change', { bubbles: true }));
         return;
       }
 
@@ -715,7 +754,71 @@
       const p = document.createElement('p');
       p.appendChild(document.createElement('br'));
       editor.appendChild(p);
+
+      if (editor.classList) {
+        editor.classList.add('ql-blank');
+      }
+
       editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function submitCurrentPrompt(retries = 5, interval = 200) {
+      const trySubmit = (remaining) => {
+        const sendButtonSelectors = [
+          'button[aria-label="プロンプトを送信"]',
+          'button[aria-label="Send prompt"]',
+          'button[aria-label="Send message"]',
+          'button[aria-label*="送信"]',
+          'button[aria-label*="Send" i]',
+          '[data-test-id="send-button-container"] button',
+          '.send-button-container button',
+          '.send-button button',
+          'button.send-button'
+        ];
+
+        for (const sel of sendButtonSelectors) {
+          const btn = document.querySelector(sel);
+          if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+            btn.click();
+            return true;
+          }
+        }
+
+        if (remaining > 0) {
+          setTimeout(() => trySubmit(remaining - 1), interval);
+          return;
+        }
+
+        // Fallback: Dispatch Enter key on active prompt editor
+        const editor = findPromptEditor();
+        if (editor) {
+          editor.focus();
+          const enterDown = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          const enterUp = new KeyboardEvent('keyup', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          editor.dispatchEvent(enterDown);
+          editor.dispatchEvent(enterUp);
+          return true;
+        }
+        return false;
+      };
+
+      trySubmit(retries);
     }
 
     // 7. Code block & action extraction
@@ -934,6 +1037,9 @@ ${wsTree}
 
     // Export interceptor for programmatic/testing use
     window.__GTW_HANDLE_INTERCEPT__ = handleSendIntercept;
+    window.__GTW_SUBMIT_CURRENT_PROMPT__ = submitCurrentPrompt;
+    window.__GTW_FIND_PROMPT_EDITOR__ = findPromptEditor;
+    window.__GTW_SET_PROMPT_TEXT__ = setPromptText;
 
     // Listen for input changes to show slash command autocomplete menu
     document.addEventListener('input', () => {
