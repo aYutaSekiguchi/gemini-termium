@@ -15,7 +15,7 @@
 
 1. `gemini-termium` starts a headless (windowless) Google Chrome and opens Gemini in it.
 2. [Termium](https://github.com/codr1/termium), a terminal-based browser client, streams that page into your terminal as an image (Kitty Graphics / Sixel) or as text-art (ASCII / half-block) and forwards your keyboard input.
-3. A small script injected into the Gemini page adds slash commands, code-block buttons and an approval card, and talks to a local server that reads/writes files and runs commands in your project directory.
+3. A small script injected into the Gemini page adds slash commands and an approval card, and talks to a local server that reads/writes files and runs commands in your project directory.
 
 No API key is needed: you use your normal Google account through the regular Gemini web UI.
 
@@ -26,7 +26,6 @@ No API key is needed: you use your normal Google account through the regular Gem
   - `/agent <prompt>`: start an agent session.
   - `/run <cmd>`: run a shell command in your project directory and show its output in an on-screen console.
   - `/status`, `/help`: show connection info and available commands.
-- **"Run Locally" button** on shell code blocks in Gemini's answers.
 - **Sign in once**: your Google login is stored in a dedicated Chrome profile (the "master profile") and is reused for every project directory. On first launch it is copied from your regular Google Chrome profile if you are already signed in there; otherwise run `--login` once (see [Usage](#usage)).
 - **Lightweight**: one Node.js process manages Chrome, the local server and Termium (about 80MB of RAM, excluding Chrome itself).
 - **Platforms**: macOS (Apple Silicon & Intel) and Linux, in terminals such as Ghostty, iTerm2, WezTerm and Kitty.

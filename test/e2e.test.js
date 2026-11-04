@@ -340,34 +340,63 @@ console.log("hello from e2e test");</code></pre>
     assert.match(fileContent, /hello from e2e test/);
   });
 
-  it('6. Injects action buttons onto code blocks and executes command on button click', async () => {
-    const buttonsInjected = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const runBtn = document.querySelector('.gtw-code-btn.run');
-          return Boolean(runBtn);
-        })()
-      `);
-    }, 5000);
+  it('6. Does not inject in-DOM Run Locally buttons and parses bare run-command block cleanly', async () => {
+    // 1. Verify that legacy .gtw-code-btn is NOT injected into the DOM
+    const buttonsFound = await evaluateInPage(`
+      (() => {
+        return Boolean(document.querySelector('.gtw-code-btn'));
+      })()
+    `);
+    assert.equal(buttonsFound, false, 'In-DOM code block action buttons must NOT be injected');
 
-    assert.equal(buttonsInjected, true, 'Code block action buttons must be injected into DOM');
-
-    // Click the "⚡ Run Locally" button
+    // 2. Simulate Gemini emitting run-command: with bare code block (no language specified)
     await evaluateInPage(`
       (() => {
-        const runBtn = document.querySelector('.gtw-code-btn.run');
-        runBtn.click();
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        const p = document.createElement('p');
+        p.textContent = 'run-command:';
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = 'echo "bare_run_command_success"';
+        pre.appendChild(code);
+        inner.appendChild(p);
+        inner.appendChild(pre);
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
       })()
     `);
 
-    const output = await pollUntil(async () => {
-      const drawerBody = await evaluateInPage(`
-        document.querySelector('.gtw-console-body')?.textContent.trim()
+    // Verify approval modal appears detecting command from bare run-command block (and not "Run locally")
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('bare_run_command_success'));
+        })()
       `);
-      return drawerBody && drawerBody.includes('snippet-executed') ? drawerBody : null;
-    }, 6000);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for bare run-command block');
 
-    assert.match(output, /snippet-executed/);
+    // Verify "Run locally" is NOT anywhere in the approval modal or parsed command
+    const cardText = await evaluateInPage(`document.querySelector('.gtw-agent-approval-card')?.innerText || ''`);
+    assert.doesNotMatch(cardText, /Run locally/i);
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify command output submitted to editor
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`(document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)') || document.querySelector('[contenteditable="true"]'))?.textContent.trim()`);
+      return text && text.includes('bare_run_command_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive command output from bare run-command block');
   });
 
   it('7. Detects agent tool call tag, prompts Human-in-the-Loop card, and executes upon user approval', async () => {

@@ -279,24 +279,6 @@
           max-height: 340px;
           line-height: 1.45;
         }
-        .gtw-code-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          background: #1e293b;
-          color: #94a3b8;
-          border: 1px solid #334155;
-          border-radius: 4px;
-          padding: 4px 10px;
-          font-size: 11px;
-          font-weight: 500;
-          cursor: pointer;
-          margin-left: 6px;
-          transition: all 0.15s ease;
-        }
-        .gtw-code-btn:hover { background: #334155; color: #f8fafc; border-color: #64748b; }
-        .gtw-code-btn.apply:hover { border-color: #22c55e; color: #86efac; }
-        .gtw-code-btn.run:hover { border-color: #38bdf8; color: #7dd3fc; }
 
         /* Agent Human-in-the-Loop Approval Card */
         .gtw-agent-approval-card {
@@ -1144,81 +1126,7 @@ Recommend only one action at a time.${taskPart}`;
       }
     }, true);
 
-    // 10. In-DOM Code Block Action Buttons
-    function decorateCodeBlocks() {
-      const codeContainers = Array.from(document.querySelectorAll(
-        'model-response pre:not([data-gtw-decorated]), model-response code-block:not([data-gtw-decorated]), .conversation-container pre:not([data-gtw-decorated]), .conversation-container code-block:not([data-gtw-decorated])'
-      )).filter(b => !b.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container'));
-
-      codeContainers.forEach((block) => {
-        block.setAttribute('data-gtw-decorated', 'true');
-
-        const codeElem = block.querySelector('code') || block;
-        const content = (codeElem.innerText || codeElem.textContent || '').trim();
-        if (!content) return;
-
-        const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
-        const langMatch = classes.match(/(?:language|lang)-([a-z0-9_+-]+)/i) ||
-                          block.getAttribute('data-language');
-        const lang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
-
-        const isCmd = ['bash', 'sh', 'shell', 'zsh', 'terminal'].includes(lang) ||
-                      content.startsWith('$ ') || content.startsWith('npm ') ||
-                      content.startsWith('git ') || content.startsWith('cargo ') ||
-                      content.startsWith('docker ');
-
-        let filePath = null;
-        const tagMatch = content.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?>/i);
-        if (tagMatch) {
-          filePath = tagMatch[1].trim();
-        } else {
-          const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
-                           content.match(/^(?:File:\s*)([^\s\n]+)/im);
-          if (explicit) {
-            filePath = explicit[1].trim();
-          } else {
-            const firstLines = content.split('\n').slice(0, 3).join('\n');
-            const commentPath = firstLines.match(/(?:\/\/|#|\/\*|<!--)\s*([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/);
-            if (commentPath && !commentPath[1].startsWith('http')) {
-              filePath = commentPath[1].trim();
-            }
-          }
-        }
-
-        if (!filePath && block.previousElementSibling) {
-          const prevText = block.previousElementSibling.textContent || '';
-          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
-                            prevText.match(/(?:file|path|ファイル):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
-          if (prevMatch) {
-            filePath = prevMatch[1].trim();
-          }
-        }
-
-        let header = block.querySelector('.code-block-decoration-header') ||
-                     block.querySelector('.code-block-header') ||
-                     block.parentElement?.querySelector('.header');
-        if (!header) {
-          header = document.createElement('div');
-          header.className = 'gtw-code-header';
-          header.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:4px;';
-          block.parentNode.insertBefore(header, block);
-        }
-
-        if (isCmd) {
-          const runBtn = document.createElement('button');
-          runBtn.className = 'gtw-code-btn run';
-          runBtn.textContent = '⚡ Run Locally';
-          runBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleRunCommand(content.replace(/^\$\s+/gm, '').trim());
-          };
-          header.appendChild(runBtn);
-        }
-      });
-    }
-
-    // 11. Autonomous Agent Engine with Human-in-the-Loop Confirmation
+    // 10. Autonomous Agent Engine with Human-in-the-Loop Confirmation
     let activeAgentModal = null;
     let activeModalResponse = null;
     let activeModalCleanup = null;
@@ -1323,8 +1231,8 @@ Recommend only one action at a time.${taskPart}`;
         }
       }
 
-      // 0d. run-command: <inline command>
-      const naturalRunCmdInlineRegex = /\b(?:run[-_\s]?command)\s*:\s*[`'"]?([^\r\n`'"]+)[`'"]?/gi;
+      // 0d. run-command: <inline command> (strictly on the same line)
+      const naturalRunCmdInlineRegex = /\b(?:run[-_\s]?command)[ \t]*:[ \t]*[`'"]?([^\r\n`'"]+)[`'"]?/gi;
       while ((m = naturalRunCmdInlineRegex.exec(rawText)) !== null) {
         const cmd = sanitizeTagValue(m[1].replace(/^\$\s+/gm, ''));
         if (cmd && !cmd.startsWith('`') && !cmd.includes('```')) {
@@ -1680,7 +1588,7 @@ Recommend only one action at a time.${taskPart}`;
           }
         }
         if (!writePath) {
-          let sibling = block.previousElementSibling;
+          let sibling = block.previousElementSibling || (block.parentElement && block.parentElement !== responseEl ? block.parentElement.previousElementSibling : null);
           let count = 0;
           while (sibling && count < 3) {
             const sibText = (sibling.textContent || '').trim();
@@ -1706,29 +1614,58 @@ Recommend only one action at a time.${taskPart}`;
           };
         }
 
-        // 3. Exec block: ```bash, ```sh, ```exec, ```zsh, ```terminal
+        // 3. Preceded by run-command: block (supports bare code blocks without language attribute)
+        let isPrecededByRunCmd = false;
+        let sib = block.previousElementSibling || (block.parentElement && block.parentElement !== responseEl ? block.parentElement.previousElementSibling : null);
+        let sc = 0;
+        while (sib && sc < 3) {
+          const sibText = (sib.textContent || '').trim();
+          if (/(?:run[-_\s]?command|run)\s*:/i.test(sibText)) {
+            isPrecededByRunCmd = true;
+            break;
+          }
+          sib = sib.previousElementSibling;
+          sc++;
+        }
+
+        if (isPrecededByRunCmd) {
+          const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
+          if (rawCmd) {
+            const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
+            if (catMatch && looksLikeFilePath(catMatch[1])) {
+              return {
+                type: 'read',
+                title: 'Read Workspace File',
+                filePath: catMatch[1].replace(/^\.\//, ''),
+                rawTag: block.outerHTML || content
+              };
+            }
+            if (looksLikeFilePath(rawCmd)) {
+              return {
+                type: 'read',
+                title: 'Read Workspace File',
+                filePath: rawCmd,
+                rawTag: block.outerHTML || content
+              };
+            }
+            return {
+              type: 'tool_call',
+              title: 'Execute Shell Command',
+              command: rawCmd,
+              rawTag: block.outerHTML || content
+            };
+          }
+        }
+
+        // 4. Exec block: ```bash, ```sh, ```exec, ```zsh, ```terminal
         if (['exec', 'tool_call', 'bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(lang)) {
           const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
           if (rawCmd) {
             const catMatch = rawCmd.match(/^(?:cat|head|tail|less)\s+["']?([a-zA-Z0-9_\-./]+)["']?$/i);
             const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
 
-            let isPrecededByRunCmd = false;
-            let sib = block.previousElementSibling;
-            let sc = 0;
-            while (sib && sc < 3) {
-              const sibText = (sib.textContent || '').trim();
-              if (/(?:run[-_\s]?command|run)\s*:/i.test(sibText)) {
-                isPrecededByRunCmd = true;
-                break;
-              }
-              sib = sib.previousElementSibling;
-              sc++;
-            }
-
             const isExplicitTool = isToolLang ||
                                    Boolean(catMatch) ||
-                                   isPrecededByRunCmd ||
                                    block.hasAttribute('data-tool') ||
                                    block.classList.contains('agent-tool') ||
                                    responseEl.hasAttribute('data-agent') ||
@@ -2090,12 +2027,10 @@ Recommend only one action at a time.${taskPart}`;
     }
 
     const observer = new MutationObserver(() => {
-      decorateCodeBlocks();
       checkForAgentToolCalls();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => {
-      decorateCodeBlocks();
       checkForAgentToolCalls();
     }, 1000);
 
