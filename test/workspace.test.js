@@ -138,6 +138,25 @@ test('readFileFromDisk - securely reads files and enforces boundaries', () => {
   }
 });
 
+test('readFileFromDisk - works across symlinked root directories (macOS /var -> /private/var)', () => {
+  const tmp = os.tmpdir();
+  const realDir = path.join(tmp, `gtw-real-${Date.now()}`);
+  const symlinkDir = path.join(tmp, `gtw-symlink-${Date.now()}`);
+
+  fs.mkdirSync(path.join(realDir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(realDir, 'src/data.txt'), 'symlink content');
+  fs.symlinkSync(realDir, symlinkDir);
+
+  try {
+    const res = readFileFromDisk('src/data.txt', symlinkDir);
+    assert.equal(res.filePath, 'src/data.txt');
+    assert.equal(res.content, 'symlink content');
+  } finally {
+    try { fs.unlinkSync(symlinkDir); } catch {}
+    try { fs.rmSync(realDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
 test('formatWorkspaceTree - formats clean file list for prompt injection', () => {
   const root = path.join(os.tmpdir(), `gtw-tree-test-${Date.now()}`);
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });

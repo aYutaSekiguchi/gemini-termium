@@ -9,10 +9,8 @@ test('chromeManager: locateChromeBinary finds browser on current system', () => 
 });
 
 test('chromeManager: custom browser path is honored', () => {
-  const custom = locateChromeBinary('/usr/bin/google-chrome');
-  if (custom) {
-    assert.strictEqual(custom, '/usr/bin/google-chrome');
-  }
+  const custom = locateChromeBinary(process.execPath);
+  assert.strictEqual(custom, process.execPath);
 });
 
 test('chromeManager: findAvailablePort finds free port', async () => {

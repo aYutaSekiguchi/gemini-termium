@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createBridgeServer } from '../src/server.js';
 import { startAutoInjector } from '../src/cdpClient.js';
+import { locateChromeBinary } from '../src/chromeManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,19 +25,6 @@ function getAvailablePort() {
     });
     s.on('error', reject);
   });
-}
-
-function findChromeBinary() {
-  const candidates = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium',
-    '/snap/bin/chromium'
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  return null;
 }
 
 describe('E2E: Workspace Bridge & Slash Command Interception in Gemini DOM', () => {
@@ -92,7 +80,7 @@ describe('E2E: Workspace Bridge & Slash Command Interception in Gemini DOM', () 
   }
 
   before(async () => {
-    const chromeBin = findChromeBinary();
+    const chromeBin = locateChromeBinary();
     if (!chromeBin) {
       throw new Error('No compatible Chrome/Chromium binary found for E2E testing.');
     }

@@ -5,21 +5,43 @@ import { spawn } from 'node:child_process';
 /**
  * Verify whether targetPath is strictly inside rootDir, guarding against
  * path traversal (../), absolute paths outside root, and symlink escapes.
+ * Handles canonical realpath resolution across symlinked directories (e.g., macOS /var -> /private/var).
  */
 export function isPathInsideRootDir(targetPath, rootDir = process.cwd()) {
   if (!targetPath || typeof targetPath !== 'string') return false;
   try {
     const realRootDir = fs.existsSync(rootDir) ? fs.realpathSync(rootDir) : path.resolve(rootDir);
-    const resolved = path.resolve(realRootDir, targetPath);
 
-    // Lexical containment check
-    const rel = path.relative(realRootDir, resolved);
+    // Resolve relative paths against realRootDir; resolve absolute paths as-is
+    const resolvedPath = path.isAbsolute(targetPath)
+      ? path.resolve(targetPath)
+      : path.resolve(realRootDir, targetPath);
+
+    // Canonicalize real target path, handling symlinks (e.g. macOS /var -> /private/var)
+    let realTarget = resolvedPath;
+    if (fs.existsSync(resolvedPath)) {
+      realTarget = fs.realpathSync(resolvedPath);
+    } else {
+      let current = resolvedPath;
+      let suffix = '';
+      while (current && current !== path.dirname(current)) {
+        if (fs.existsSync(current)) {
+          realTarget = path.join(fs.realpathSync(current), suffix);
+          break;
+        }
+        suffix = suffix ? path.join(path.basename(current), suffix) : path.basename(current);
+        current = path.dirname(current);
+      }
+    }
+
+    // Canonical containment check
+    const rel = path.relative(realRootDir, realTarget);
     if (rel.startsWith('..') || path.isAbsolute(rel)) {
       return false;
     }
 
     // Symlink escape check: check realpath for every existing ancestor
-    let current = resolved;
+    let current = realTarget;
     while (current && current !== realRootDir && current !== path.dirname(current)) {
       if (fs.existsSync(current)) {
         const realCurrent = fs.realpathSync(current);
