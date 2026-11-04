@@ -208,3 +208,31 @@ export function scanWorkspaceFiles(rootDir = process.cwd(), maxFiles = 500) {
   walk(rootDir);
   return results;
 }
+
+/**
+ * Reads a workspace file securely within the root directory.
+ */
+export function readFileFromDisk(filePath, rootDir = process.cwd(), maxBytes = 2 * 1024 * 1024) {
+  if (!filePath || typeof filePath !== 'string') {
+    throw new Error('Invalid file path');
+  }
+  const fullPath = path.resolve(rootDir, filePath);
+  if (!isPathInsideRootDir(fullPath, rootDir)) {
+    throw new Error('Access denied: Path is outside workspace root');
+  }
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`File not found: ${filePath}`);
+  }
+  const stat = fs.statSync(fullPath);
+  if (stat.isDirectory()) {
+    throw new Error(`Path is a directory: ${filePath}`);
+  }
+  if (stat.size > maxBytes) {
+    throw new Error(`File exceeds maximum size limit of ${Math.round(maxBytes / 1024 / 1024)}MB`);
+  }
+  return {
+    filePath: path.relative(rootDir, fullPath),
+    content: fs.readFileSync(fullPath, 'utf8'),
+    size: stat.size
+  };
+}

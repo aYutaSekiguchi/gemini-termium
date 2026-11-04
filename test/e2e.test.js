@@ -374,4 +374,52 @@ console.log("hello from e2e test");</code></pre>
 
     assert.match(output, /snippet-executed/);
   });
+
+  it('7. Detects agent tool call tag, prompts Human-in-the-Loop card, and executes upon user approval', async () => {
+    // Inject a simulated agent response with %<write path="agent_test.txt">created by autonomous agent%</write>%
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '%<write path="agent_test.txt">created by autonomous agent%</write>%';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify Human-in-the-Loop card appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Agent Request') && card.innerText.includes('Human Approval Required'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear when agent tag is emitted');
+
+    // User clicks Approve (or presses 'y')
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file written to disk
+    const targetFile = path.join(tmpWorkspaceDir, 'agent_test.txt');
+    const written = await pollUntil(async () => {
+      return fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : null;
+    }, 5000);
+    assert.equal(written, 'created by autonomous agent');
+
+    // Verify prompt input contains human-triggered tool result formatted for reply
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
+      return text && text.includes('%<tool_result>%') ? text : null;
+    }, 5000);
+    assert.match(editorResult, /%<tool_result>%/);
+    assert.match(editorResult, /Successfully applied 1 file change/);
+  });
 });

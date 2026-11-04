@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyFileChangesToDisk, executeShellCommand } from './workspace.js';
+import { applyFileChangesToDisk, executeShellCommand, readFileFromDisk } from './workspace.js';
 import { createCliWorkspaceZip } from './workspaceZip.js';
 
 /**
@@ -275,6 +275,11 @@ export function startAutoInjector({
                         console.log(`  ⚡ Command:   /apply (${fileActions.length} files)`);
                         const applyRes = applyFileChangesToDisk(fileActions, cwd);
                         result = { ok: true, ...applyRes, totalApplied: applyRes.applied.length };
+                      } else if (action === 'read') {
+                        const filePath = (payload?.filePath || payload?.path || '').trim();
+                        console.log(`  ⚡ Command:   read ${filePath}`);
+                        const readRes = readFileFromDisk(filePath, cwd);
+                        result = { ok: true, ...readRes };
                       } else if (action === 'upload_zip') {
                         console.log('  ⚡ Command:   /zip');
                         const zipInfo = await createCliWorkspaceZip(cwd);

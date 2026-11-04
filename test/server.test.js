@@ -62,7 +62,18 @@ test('createBridgeServer - HTTP API endpoints integration', async () => {
     assert.equal(runData.ok, true);
     assert.ok(runData.stdout.includes('daemon-run-success'));
 
-    // 6. Action: Package workspace zip
+    // 6. Action: Read file
+    const readRes = await fetch(`http://127.0.0.1:${port}/v1/actions/read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: 'src/hello.js' })
+    });
+    assert.equal(readRes.status, 200);
+    const readData = await readRes.json();
+    assert.equal(readData.ok, true);
+    assert.equal(readData.content, 'export const hello = "world";');
+
+    // 7. Action: Package workspace zip
     const zipRes = await fetch(`http://127.0.0.1:${port}/v1/workspace/zip`, {
       method: 'POST'
     });

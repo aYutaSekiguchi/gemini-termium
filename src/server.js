@@ -5,7 +5,8 @@ import {
   isPathInsideRootDir,
   applyFileChangesToDisk,
   executeShellCommand,
-  scanWorkspaceFiles
+  scanWorkspaceFiles,
+  readFileFromDisk
 } from './workspace.js';
 import { createCliWorkspaceZip, formatBytes } from './workspaceZip.js';
 import { ChromeDevToolsClient } from './cdpClient.js';
@@ -105,6 +106,20 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {})
           skipped: result.skipped,
           totalApplied: result.applied.length
         });
+      }
+
+      // 5b. Read file from workspace
+      if (req.method === 'POST' && pathname === '/v1/actions/read') {
+        const filePath = (body.filePath || body.path || '').trim();
+        if (!filePath) {
+          return sendJson(400, { ok: false, error: 'No file path provided' });
+        }
+        try {
+          const res = readFileFromDisk(filePath, cwd);
+          return sendJson(200, { ok: true, ...res });
+        } catch (err) {
+          return sendJson(400, { ok: false, error: err.message });
+        }
       }
 
       // 6. Execute shell command in workspace

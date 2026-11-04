@@ -71,6 +71,7 @@
       const endpoints = {
         get_workspace: { path: '/v1/workspace', method: 'GET' },
         run: { path: '/v1/actions/run', method: 'POST', body: payload },
+        read: { path: '/v1/actions/read', method: 'POST', body: payload },
         apply: { path: '/v1/actions/apply', method: 'POST', body: payload },
         upload_zip: { path: '/v1/cdp/upload', method: 'POST', body: payload }
       };
@@ -107,6 +108,7 @@
   }
 
   const SLASH_COMMANDS = [
+    { command: '/agent', label: '🤖 /agent [prompt]', desc: 'Start autonomous agent task with Human-in-the-Loop approval' },
     { command: '/apply', label: '📁 /apply', desc: 'Apply code diffs to local workspace' },
     { command: '/run', label: '⚡ /run [cmd]', desc: 'Execute shell command on local workspace' },
     { command: '/zip', label: '📦 /zip', desc: 'Package and attach workspace zip' },
@@ -298,6 +300,114 @@
         .gtw-code-btn:hover { background: #334155; color: #f8fafc; border-color: #64748b; }
         .gtw-code-btn.apply:hover { border-color: #22c55e; color: #86efac; }
         .gtw-code-btn.run:hover { border-color: #38bdf8; color: #7dd3fc; }
+
+        /* Agent Human-in-the-Loop Approval Card */
+        .gtw-agent-approval-card {
+          position: fixed;
+          bottom: 80px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 90%;
+          max-width: 640px;
+          background: #0f172a;
+          border: 2px solid #38bdf8;
+          border-radius: 12px;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+          z-index: 1000000;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          color: #f8fafc;
+          overflow: hidden;
+          animation: gtwSlideUp 0.15s ease-out;
+        }
+        @keyframes gtwSlideUp {
+          from { transform: translate(-50%, 20px); opacity: 0; }
+          to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .gtw-agent-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 16px;
+          background: #1e293b;
+          border-bottom: 1px solid #334155;
+        }
+        .gtw-agent-title {
+          font-weight: 700;
+          font-size: 13px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #38bdf8;
+        }
+        .gtw-agent-policy {
+          font-size: 11px;
+          color: #94a3b8;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 2px 6px;
+          border-radius: 4px;
+        }
+        .gtw-agent-body {
+          padding: 12px 16px;
+          max-height: 240px;
+          overflow-y: auto;
+          font-size: 12px;
+        }
+        .gtw-agent-body code {
+          background: #1e293b;
+          padding: 4px 8px;
+          border-radius: 4px;
+          display: block;
+          white-space: pre-wrap;
+          word-break: break-all;
+          color: #a5f3fc;
+        }
+        .gtw-agent-preview {
+          margin-top: 6px;
+          background: #090d16;
+          padding: 8px;
+          border-radius: 6px;
+          font-size: 11px;
+          color: #cbd5e1;
+          max-height: 120px;
+          overflow-y: auto;
+          white-space: pre-wrap;
+        }
+        .gtw-agent-actions {
+          display: flex;
+          gap: 10px;
+          padding: 10px 16px;
+          background: #1e293b;
+          border-top: 1px solid #334155;
+          justify-content: flex-end;
+        }
+        .gtw-agent-btn-approve {
+          background: #16a34a;
+          color: #ffffff;
+          border: none;
+          padding: 6px 14px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          font-size: 12px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .gtw-agent-btn-approve:hover {
+          background: #22c55e;
+        }
+        .gtw-agent-btn-reject {
+          background: #475569;
+          color: #f1f5f9;
+          border: none;
+          padding: 6px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .gtw-agent-btn-reject:hover {
+          background: #64748b;
+        }
       `;
       (document.head || document.documentElement).appendChild(styleEl);
     }
@@ -616,9 +726,29 @@
       if (responses.length === 0) return { fileActions: [], commandActions: [] };
 
       const latest = responses[responses.length - 1];
-      const codeBlocks = Array.from(latest.querySelectorAll('pre, code-block, [class*="code-block"]'));
+      const rawText = latest.innerText || latest.textContent || '';
       const fileActions = [];
       const commandActions = [];
+
+      // 1. Direct tag parsing for %<write path="...">% or <write path="...">
+      const writeMatches = Array.from(rawText.matchAll(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?(?:>|%>)([\s\S]*?)(?:%<\/|<\/)write(?:>|%>)/gi));
+      for (const wm of writeMatches) {
+        fileActions.push({
+          filePath: wm[1].trim(),
+          content: wm[2]
+        });
+      }
+
+      // 2. Direct tag parsing for %<tool_call>% or <tool_call>
+      const cmdMatches = Array.from(rawText.matchAll(/(?:%<|<)tool_call(?:>|%>)([\s\S]*?)(?:%<\/|<\/)tool_call(?:>|%>)/gi));
+      for (const cm of cmdMatches) {
+        commandActions.push({
+          language: 'bash',
+          content: cm[1].trim()
+        });
+      }
+
+      const codeBlocks = Array.from(latest.querySelectorAll('pre, code-block, [class*="code-block"]'));
 
       for (const block of codeBlocks) {
         const codeElem = block.querySelector('code') || block;
@@ -635,16 +765,34 @@
                       content.startsWith('git ') || content.startsWith('cargo ') ||
                       content.startsWith('docker ');
 
-        const pathMatch = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
-                          content.match(/^(?:File:\s*)([^\s\n]+)/m);
-        const filePath = pathMatch ? pathMatch[1].trim() : null;
+        let filePath = null;
+        const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
+                         content.match(/^(?:File:\s*)([^\s\n]+)/im);
+        if (explicit) {
+          filePath = explicit[1].trim();
+        } else {
+          const firstLines = content.split('\n').slice(0, 3).join('\n');
+          const commentPath = firstLines.match(/(?:\/\/|#|\/\*|<!--)\s*([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/);
+          if (commentPath && !commentPath[1].startsWith('http')) {
+            filePath = commentPath[1].trim();
+          }
+        }
+
+        if (!filePath && block.previousElementSibling) {
+          const prevText = block.previousElementSibling.textContent || '';
+          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
+                            prevText.match(/(?:file|path|ファイル):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
+          if (prevMatch) {
+            filePath = prevMatch[1].trim();
+          }
+        }
 
         if (isCmd) {
           commandActions.push({
             language: lang || 'bash',
             content: content.replace(/^\$\s+/gm, '').trim()
           });
-        } else {
+        } else if (filePath) {
           fileActions.push({
             language: lang,
             filePath,
@@ -719,7 +867,7 @@
       const command = parts[0].toLowerCase();
       const arg = parts.slice(1).join(' ').trim();
 
-      if (['/apply', '/run', '/zip', '/status', '/help'].includes(command)) {
+      if (['/apply', '/run', '/zip', '/status', '/help', '/agent'].includes(command)) {
         if (e && typeof e.preventDefault === 'function') {
           e.preventDefault();
           e.stopPropagation();
@@ -729,7 +877,9 @@
         clearPromptText(editor);
         slashMenu.style.display = 'none';
 
-        if (command === '/apply') {
+        if (command === '/agent') {
+          handleAgentCommand(arg, editor);
+        } else if (command === '/apply') {
           handleApplyFiles();
         } else if (command === '/run') {
           handleRunCommand(arg || null);
@@ -743,11 +893,43 @@
           });
         } else if (command === '/help') {
           callBridge('help');
-          showToast('Commands: /apply (apply code) | /run [cmd] (execute shell) | /zip (attach workspace) | /status', 'info', 7000);
+          showToast('Commands: /agent [prompt] (autonomous agent) | /apply (apply code) | /run [cmd] (execute shell) | /zip | /status', 'info', 7000);
         }
         return true;
       }
       return false;
+    }
+
+    function handleAgentCommand(arg, editor) {
+      const promptInstruction = `あなたは自律型コーディングエージェントとして動作してください。
+具体的には以下のルールとマークアップ形式のツール呼び出しに厳格に従うこと：
+
+1. コマンド実行:
+%<tool_call>%実行コマンド%</tool_call>%
+とだけ出力し、ユーザーからの実行結果を待つこと。
+
+2. ファイル読み込み:
+%<read>%ファイルパス%</read>%
+とだけ出力し、ファイル内容の返信を待つこと。
+
+3. ファイル書き込み:
+%<write path="ファイルパス">%ファイル内容%</write>%
+とだけ出力し、書き込み完了通知を待つこと。
+
+【重要】
+- 各ツール呼び出しを出力した後は、必ずユーザーからの結果返信が来るまで追加の推論や追加の出力を停止（待機）すること。
+- 1回のターンで実行するツール呼び出しは原則1つだけにすること。`;
+
+      if (arg) {
+        const fullPrompt = `${promptInstruction}\n\n【ユーザーからの指示】\n${arg}`;
+        setPromptText(editor, fullPrompt);
+        showToast('🤖 Agent prompt prepared. Starting...', 'info', 3000);
+        setTimeout(() => submitCurrentPrompt(), 300);
+      } else {
+        const template = `${promptInstruction}\n\n【ユーザーからの指示】\n`;
+        setPromptText(editor, template);
+        showToast('🤖 Agent template inserted. Add your prompt and press Enter.', 'info', 6000);
+      }
     }
 
     // Export interceptor for programmatic/testing use
@@ -839,26 +1021,62 @@
 
     // 10. In-DOM Code Block Action Buttons
     function decorateCodeBlocks() {
-      const preBlocks = document.querySelectorAll('model-response pre:not([data-gtw-decorated]), .conversation-container pre:not([data-gtw-decorated])');
-      preBlocks.forEach((pre) => {
-        pre.setAttribute('data-gtw-decorated', 'true');
+      const codeContainers = document.querySelectorAll(
+        'model-response pre:not([data-gtw-decorated]), model-response code-block:not([data-gtw-decorated]), .conversation-container pre:not([data-gtw-decorated]), .conversation-container code-block:not([data-gtw-decorated])'
+      );
 
-        const codeElem = pre.querySelector('code') || pre;
+      codeContainers.forEach((block) => {
+        block.setAttribute('data-gtw-decorated', 'true');
+
+        const codeElem = block.querySelector('code') || block;
         const content = (codeElem.innerText || codeElem.textContent || '').trim();
-        const classes = (codeElem.className || '') + ' ' + (pre.className || '');
+        if (!content) return;
 
-        const isCmd = /bash|sh|shell|zsh|terminal/.test(classes) || content.startsWith('$ ') || content.startsWith('npm ') || content.startsWith('git ');
-        const pathMatch = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i);
-        const filePath = pathMatch ? pathMatch[1].trim() : null;
+        const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
+        const langMatch = classes.match(/(?:language|lang)-([a-z0-9_+-]+)/i) ||
+                          block.getAttribute('data-language');
+        const lang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
 
-        let header = pre.querySelector('.code-block-decoration-header') ||
-                     pre.parentElement?.querySelector('.header') ||
-                     pre.parentElement?.querySelector('.code-block-header');
+        const isCmd = ['bash', 'sh', 'shell', 'zsh', 'terminal'].includes(lang) ||
+                      content.startsWith('$ ') || content.startsWith('npm ') ||
+                      content.startsWith('git ') || content.startsWith('cargo ') ||
+                      content.startsWith('docker ');
+
+        let filePath = null;
+        const tagMatch = content.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?>/i);
+        if (tagMatch) {
+          filePath = tagMatch[1].trim();
+        } else {
+          const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
+                           content.match(/^(?:File:\s*)([^\s\n]+)/im);
+          if (explicit) {
+            filePath = explicit[1].trim();
+          } else {
+            const firstLines = content.split('\n').slice(0, 3).join('\n');
+            const commentPath = firstLines.match(/(?:\/\/|#|\/\*|<!--)\s*([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/);
+            if (commentPath && !commentPath[1].startsWith('http')) {
+              filePath = commentPath[1].trim();
+            }
+          }
+        }
+
+        if (!filePath && block.previousElementSibling) {
+          const prevText = block.previousElementSibling.textContent || '';
+          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
+                            prevText.match(/(?:file|path|ファイル):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
+          if (prevMatch) {
+            filePath = prevMatch[1].trim();
+          }
+        }
+
+        let header = block.querySelector('.code-block-decoration-header') ||
+                     block.querySelector('.code-block-header') ||
+                     block.parentElement?.querySelector('.header');
         if (!header) {
           header = document.createElement('div');
           header.className = 'gtw-code-header';
           header.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:4px;';
-          pre.parentNode.insertBefore(header, pre);
+          block.parentNode.insertBefore(header, block);
         }
 
         if (isCmd) {
@@ -885,11 +1103,238 @@
       });
     }
 
-    const observer = new MutationObserver(decorateCodeBlocks);
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(decorateCodeBlocks, 1000);
+    // 11. Autonomous Agent Engine with Human-in-the-Loop Confirmation
+    let activeAgentModal = null;
+    const processedToolCallIds = new Set();
 
-    console.log('[gemini-termway] In-page workspace bridge ready.');
+    function parseToolCallsFromText(rawText) {
+      if (!rawText) return null;
+
+      // 1. Tool Call (command): %<tool_call>%cmd%</tool_call>% or <tool_call>cmd</tool_call>
+      const cmdMatch = rawText.match(/(?:%<|<)tool_call(?:>|%>)([\s\S]*?)(?:%<\/|<\/)tool_call(?:>|%>)/i);
+      if (cmdMatch) {
+        return {
+          type: 'tool_call',
+          title: 'Execute Shell Command',
+          command: cmdMatch[1].trim(),
+          rawTag: cmdMatch[0]
+        };
+      }
+
+      // 2. Read File: %<read>%path%</read>% or <read>path</read>
+      const readMatch = rawText.match(/(?:%<|<)read(?:>|%>)([\s\S]*?)(?:%<\/|<\/)read(?:>|%>)/i);
+      if (readMatch) {
+        return {
+          type: 'read',
+          title: 'Read Workspace File',
+          filePath: readMatch[1].trim(),
+          rawTag: readMatch[0]
+        };
+      }
+
+      // 3. Write File: %<write path="...">content%</write>% or <write path="...">content</write>
+      const writeMatch = rawText.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?(?:>|%>)([\s\S]*?)(?:%<\/|<\/)write(?:>|%>)/i);
+      if (writeMatch) {
+        return {
+          type: 'write',
+          title: 'Write Workspace File',
+          filePath: writeMatch[1].trim(),
+          content: writeMatch[2],
+          rawTag: writeMatch[0]
+        };
+      }
+
+      return null;
+    }
+
+    function checkForAgentToolCalls() {
+      const responses = Array.from(document.querySelectorAll('model-response, .conversation-container'));
+      if (responses.length === 0) return;
+      const latest = responses[responses.length - 1];
+
+      if (activeAgentModal) return;
+
+      const rawText = latest.innerText || latest.textContent || '';
+      const toolCall = parseToolCallsFromText(rawText);
+      if (!toolCall) return;
+
+      const callId = `${toolCall.type}:${toolCall.command || toolCall.filePath}:${toolCall.rawTag.length}`;
+      if (processedToolCallIds.has(callId)) return;
+
+      showAgentApprovalModal(toolCall, callId);
+    }
+
+    function showAgentApprovalModal(toolCall, callId) {
+      if (activeAgentModal) {
+        try { activeAgentModal.remove(); } catch {}
+        activeAgentModal = null;
+      }
+
+      const modal = document.createElement('div');
+      modal.className = 'gtw-agent-approval-card';
+      activeAgentModal = modal;
+
+      // Header
+      const header = document.createElement('div');
+      header.className = 'gtw-agent-header';
+
+      const title = document.createElement('div');
+      title.className = 'gtw-agent-title';
+      title.textContent = `🤖 Agent Request: ${toolCall.title}`;
+
+      const policyBadge = document.createElement('div');
+      policyBadge.className = 'gtw-agent-policy';
+      policyBadge.textContent = 'Human Approval Required';
+
+      header.appendChild(title);
+      header.appendChild(policyBadge);
+      modal.appendChild(header);
+
+      // Body
+      const body = document.createElement('div');
+      body.className = 'gtw-agent-body';
+
+      if (toolCall.type === 'tool_call') {
+        const desc = document.createElement('div');
+        desc.style.marginBottom = '6px';
+        desc.textContent = 'Gemini requested to run this command in your workspace:';
+        const code = document.createElement('code');
+        code.textContent = toolCall.command;
+        body.appendChild(desc);
+        body.appendChild(code);
+      } else if (toolCall.type === 'read') {
+        const desc = document.createElement('div');
+        desc.style.marginBottom = '6px';
+        desc.textContent = 'Gemini requested to read this workspace file:';
+        const code = document.createElement('code');
+        code.textContent = toolCall.filePath;
+        body.appendChild(desc);
+        body.appendChild(code);
+      } else if (toolCall.type === 'write') {
+        const desc = document.createElement('div');
+        desc.style.marginBottom = '6px';
+        desc.textContent = `Gemini requested to write to file:`;
+        const code = document.createElement('code');
+        const lineCount = toolCall.content.split('\n').length;
+        code.textContent = `${toolCall.filePath} (${lineCount} lines)`;
+        const preview = document.createElement('pre');
+        preview.className = 'gtw-agent-preview';
+        preview.textContent = toolCall.content.slice(0, 350) + (toolCall.content.length > 350 ? '\n...(truncated)' : '');
+        body.appendChild(desc);
+        body.appendChild(code);
+        body.appendChild(preview);
+      }
+      modal.appendChild(body);
+
+      // Actions
+      const actions = document.createElement('div');
+      actions.className = 'gtw-agent-actions';
+
+      const rejectBtn = document.createElement('button');
+      rejectBtn.className = 'gtw-agent-btn-reject';
+      rejectBtn.textContent = '✖ Reject [n]';
+
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'gtw-agent-btn-approve';
+      approveBtn.textContent = '✔ Approve & Reply [y]';
+
+      actions.appendChild(rejectBtn);
+      actions.appendChild(approveBtn);
+      modal.appendChild(actions);
+
+      document.body.appendChild(modal);
+
+      const cleanup = () => {
+        window.removeEventListener('keydown', onKey);
+        if (modal.parentNode) modal.parentNode.removeChild(modal);
+        if (activeAgentModal === modal) activeAgentModal = null;
+      };
+
+      const handleApprove = async () => {
+        cleanup();
+        processedToolCallIds.add(callId);
+        showToast(`⚡ Human approved: executing ${toolCall.type}...`, 'info', 3000);
+
+        let resultPayload = '';
+        if (toolCall.type === 'tool_call') {
+          const res = await callBridge('run', { command: toolCall.command });
+          showConsoleOutput(toolCall.command, res);
+          const out = (res.stdout || '') + (res.stderr || '');
+          resultPayload = `%<tool_result>%\n[Command: ${toolCall.command}]\nExit Code: ${res.code}\nOutput:\n${out.trim() || '(no output)'}\n%</tool_result>%`;
+        } else if (toolCall.type === 'read') {
+          const res = await callBridge('read', { filePath: toolCall.filePath });
+          if (res && res.ok) {
+            resultPayload = `%<tool_result>%\n[File: ${toolCall.filePath}]\n${res.content}\n%</tool_result>%`;
+          } else {
+            resultPayload = `%<tool_result>%\n[File: ${toolCall.filePath}]\nError: ${res?.error || 'Failed to read file'}\n%</tool_result>%`;
+          }
+        } else if (toolCall.type === 'write') {
+          const res = await callBridge('apply', {
+            fileActions: [{ filePath: toolCall.filePath, content: toolCall.content }]
+          });
+          if (res && res.ok) {
+            const count = res.totalApplied || res.applied?.length || 1;
+            resultPayload = `%<tool_result>%\n[Write: ${toolCall.filePath}]\nSuccessfully applied ${count} file change(s).\n%</tool_result>%`;
+          } else {
+            resultPayload = `%<tool_result>%\n[Write: ${toolCall.filePath}]\nError: ${res?.error || 'Failed to write file'}\n%</tool_result>%`;
+          }
+        }
+
+        // Post result to prompt input and submit as human-triggered reply
+        const editor = findPromptEditor();
+        if (editor) {
+          setPromptText(editor, resultPayload);
+          showToast('✔ Result submitted to Gemini.', 'success', 3000);
+          setTimeout(() => submitCurrentPrompt(), 300);
+        }
+      };
+
+      const handleReject = () => {
+        cleanup();
+        processedToolCallIds.add(callId);
+        showToast('✖ Action rejected by user.', 'info', 3000);
+        const editor = findPromptEditor();
+        if (editor) {
+          setPromptText(editor, `%<tool_result>%\n[User rejected this tool call: ${toolCall.title}]\n%</tool_result>%`);
+        }
+      };
+
+      approveBtn.onclick = handleApprove;
+      rejectBtn.onclick = handleReject;
+
+      const onKey = (e) => {
+        const tag = (e.target?.tagName || '').toLowerCase();
+        if (tag === 'textarea' || tag === 'input' || e.target?.isContentEditable) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            handleReject();
+          }
+          return;
+        }
+
+        if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') {
+          e.preventDefault();
+          handleApprove();
+        } else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
+          e.preventDefault();
+          handleReject();
+        }
+      };
+
+      window.addEventListener('keydown', onKey);
+    }
+
+    const observer = new MutationObserver(() => {
+      decorateCodeBlocks();
+      checkForAgentToolCalls();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => {
+      decorateCodeBlocks();
+      checkForAgentToolCalls();
+    }, 1000);
+
+    console.log('[gemini-termium] In-page workspace bridge & agent engine ready.');
   }
 
   startBridge();

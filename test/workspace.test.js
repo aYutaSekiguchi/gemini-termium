@@ -8,7 +8,8 @@ import {
   applyUnifiedDiff,
   applyFileChangesToDisk,
   executeShellCommand,
-  scanWorkspaceFiles
+  scanWorkspaceFiles,
+  readFileFromDisk
 } from '../src/workspace.js';
 
 test('isPathInsideRootDir - security boundary enforcement', () => {
@@ -102,6 +103,25 @@ test('scanWorkspaceFiles - ignores .git and returns relative paths', () => {
     assert.ok(files.includes('src/app.js'));
     assert.ok(files.includes('package.json'));
     assert.ok(!files.some((f) => f.includes('.git')));
+  } finally {
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('readFileFromDisk - securely reads files and enforces boundaries', () => {
+  const root = path.join(os.tmpdir(), `gtw-read-test-${Date.now()}`);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/hello.txt'), 'hello agent');
+
+  try {
+    const res = readFileFromDisk('src/hello.txt', root);
+    assert.equal(res.filePath, 'src/hello.txt');
+    assert.equal(res.content, 'hello agent');
+
+    // Outside boundary
+    assert.throws(() => readFileFromDisk('../secret.txt', root), /outside workspace root/);
+    // Non-existent
+    assert.throws(() => readFileFromDisk('missing.txt', root), /File not found/);
   } finally {
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
   }
