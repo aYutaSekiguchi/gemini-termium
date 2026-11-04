@@ -11,7 +11,7 @@ Automating the Gemini Web UI via programmatic, unprompted loops violates Google'
 
 #### Policy Rules:
 1. **Explicit Human Confirmation for Every Tool Call**:
-   When Gemini outputs a tool invocation template (`%<tool_call>%`, `%<read>%`, `%<write path="...">%`), the tool execution and subsequent response generation MUST pause until the human user explicitly reviews the action and confirms it (e.g., pressing `[y]`).
+   When Gemini outputs a tool invocation template (`[exec]`, `[read]`, `[write path="..."]`), the tool execution and subsequent response generation MUST pause until the human user explicitly reviews the action and confirms it (e.g., pressing `[y]`).
 2. **Human-Triggered Reply**:
    The reply payload containing the tool execution result (`%<tool_result>%...%</tool_result>%`) is submitted back to the Gemini Web UI ONLY as a direct consequence of the user's manual approval. The system must NEVER automatically post replies in an unconstrained background loop.
 3. **Editable / Cancellable Actions**:
@@ -27,18 +27,20 @@ Automating the Gemini Web UI via programmatic, unprompted loops violates Google'
 When `/agent [prompt]` is invoked:
 - The local bridge scans the current workspace file tree (`formatWorkspaceTree()`), excluding heavy directories like `.git`, `node_modules`, `dist`, and `vendor`.
 - The formatted file tree is automatically injected into the initial system instructions.
-- This gives Gemini complete visibility over the repository layout without brittle DOM-based file/zip uploads (`/zip` is fully deprecated).
-- Gemini uses `%<read>%file/path%</read>%` to inspect files on-demand.
+- This gives Gemini visibility over the repository layout without uploading files through the Gemini UI.
+- Gemini uses `[read]file/path[/read]` to inspect files on demand.
 
 ### 2. Tool Call Markup Formats
-Gemini is instructed via prompt to use explicit markup tags when requesting local actions:
-- **Command Execution**: `%<tool_call>%command%</tool_call>%`
-- **File Read**: `%<read>%file/path%</read>%`
-- **File Write / Patch**: `%<write path="file/path">%content%</write>%`
+Gemini is instructed via prompt to use explicit markup tags when requesting local actions. Square brackets are used because the Gemini web UI strips unknown HTML-style tags (e.g. `<read>`) from rendered answers:
+- **Command Execution**: `[exec]command[/exec]`
+- **File Read**: `[read]file/path[/read]`
+- **File Write**: `[write path="file/path"]content[/write]`
+
+The legacy `%<tool_call>%`, `%<read>%`, `%<write>%` forms are still parsed for backward compatibility. A bare file path as the entire answer is also treated as a read request. Results are returned to Gemini wrapped in `%<tool_result>%...%</tool_result>%`.
 
 When Gemini emits one of these tags, it halts further generation and awaits the user's result.
 
-### 2. Approval & Trigger Workflow
+### 3. Approval & Trigger Workflow
 1. **Parse**: In-page observer detects complete tool call tags in Gemini's response.
 2. **Prompt User**: A prominent modal/HUD prompt displays the action details (command line, file path, diff/content preview).
 3. **User Decision**:

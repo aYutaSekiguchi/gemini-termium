@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Gemini Termway Bridge",
+  "name": "Gemini Termium Bridge",
   "version": "1.0.0",
   "description": "Bridges Google Gemini WebUI with local terminal workspace for native slash commands, file patching, and command execution.",
   "permissions": [

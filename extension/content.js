@@ -1,7 +1,7 @@
 /**
- * Gemini Termway Bridge - In-Page Content Script
- * Intercepts slash commands (/apply, /run, /zip, /status, /help) in Gemini WebUI
- * with an interactive autocomplete popup menu and dual-transport bridge execution.
+ * Gemini Termium Bridge - In-Page Content Script
+ * Intercepts slash commands (/agent, /run, /status, /help) in the Gemini web UI,
+ * detects agent tool requests in responses and asks the user to approve them.
  */
 
 (function () {

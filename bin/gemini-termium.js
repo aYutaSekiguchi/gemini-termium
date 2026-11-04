@@ -34,7 +34,7 @@ Usage:
 
 Options:
   -h, --help               Show this help message
-  --login                  Open master profile in desktop window to log in to Google once
+  --login                  Open a desktop window to sign in to Google once (login is saved and reused)
   --gui                    Launch as a standard desktop window (for testing/login)
   --port <number>          Local workspace bridge server port (default: auto free port starting at 45140)
   --cdp-port <number>      Chrome remote debugging port (default: auto free port starting at 9222)
@@ -44,10 +44,9 @@ Options:
   --browser <path>         Custom Google Chrome / Chromium executable path
 
 Features:
-  - Cross-Platform Terminal Display: Powered by Termium (Kitty Graphics, Sixel, ASCII/Half-block)
-    Works on macOS (Apple Silicon & Intel) and Linux.
-  - In-Process Zero-Overhead Backend: Single Node.js daemon hosts gRPC & Local Bridge
-  - Local Workspace Isolation: Binds to the current directory ($PWD)
+  - Terminal display: Gemini web UI rendered in your terminal via Termium
+    (Kitty Graphics, Sixel, or ASCII/half-block). macOS and Linux.
+  - Local workspace: file access and commands are limited to the current directory ($PWD)
   - Native Slash Commands:
       /agent [prompt]      Start autonomous coding agent with workspace file tree & tools
       /run [cmd]           Run shell commands on local workspace
