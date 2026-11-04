@@ -11,7 +11,7 @@ Automating the Gemini Web UI via programmatic, unprompted loops violates Google'
 
 #### Policy Rules:
 1. **Explicit Human Confirmation for Every Tool Call**:
-   When Gemini outputs a tool invocation template (`[exec]`, `[read]`, `[write path="..."]`), the tool execution and subsequent response generation MUST pause until the human user explicitly reviews the action and confirms it (e.g., pressing `[y]`).
+   When Gemini outputs an action request (`send-me: <file>`, `save: <file>`, `run-command:`), the tool execution and subsequent response generation MUST pause until the human user explicitly reviews the action and confirms it (e.g., pressing `[y]`).
 2. **Human-Triggered Reply**:
    The reply payload containing the tool execution result is submitted back to the Gemini Web UI as standard conversational markdown ONLY as a direct consequence of the user's manual approval. The system must NEVER automatically post replies in an unconstrained background loop.
 3. **Editable / Cancellable Actions**:
@@ -28,20 +28,20 @@ When `/agent [prompt]` is invoked:
 - The local bridge scans the current workspace file tree (`formatWorkspaceTree()`), excluding heavy directories like `.git`, `node_modules`, `dist`, and `vendor`.
 - The formatted file tree is automatically injected into the initial system instructions.
 - This gives Gemini visibility over the repository layout without uploading files through the Gemini UI.
-- Gemini uses `[read]file/path[/read]` to inspect files on demand.
+- Gemini uses `send-me: file/path` to inspect files on demand.
 
-### 2. Tool Call Formats & Safety Guardrails
-To prevent triggering Gemini's platform safety guardrails (such as RCE false positives and prompt injection filters), `/agent` requests actions via standard Markdown code blocks:
-- **Command / File Inspection**: ````bash\ncat file/path\n```` or ````bash\ncommand\n````
-- **File Write**: ````language\n// filepath: file/path\ncontent\n````
-- **Backward Compatibility**: Bracket tags (`[exec]`, `[read]`, `[write path="..."]`) and legacy `%<tool_call>%` formats are also supported.
+### 2. Action Formats & Safety Guardrails
+To prevent triggering Gemini's platform safety guardrails (such as RCE false positives and prompt injection filters), `/agent` requests actions via natural human-facing Markdown conventions:
+- **File Read / Inspection**: `send-me: <filepath>`
+- **File Write**: `save: <filepath>` followed by a code block with file contents
+- **Command Execution**: `run-command:` followed by a bash code block
 
 Results are returned to Gemini as standard conversational markdown code blocks.
 
 When Gemini emits one of these suggestions, it awaits the user's confirmation.
 
 ### 3. Approval & Trigger Workflow
-1. **Parse**: In-page observer detects file suggestions (`cat <file>`, `// filepath: <file>`) or commands in Gemini's response.
+1. **Parse**: In-page observer detects action suggestions (`send-me:`, `save:`, `run-command:`) in Gemini's response.
 2. **Prompt User**: A prominent modal/HUD prompt displays the action details (command line, file path, diff/content preview).
 3. **User Decision**:
    - `[y]` (Approve): Executes action locally, formats clean markdown result, and types/submits reply to Gemini.

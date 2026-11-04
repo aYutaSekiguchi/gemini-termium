@@ -60,47 +60,7 @@ export function isPathInsideRootDir(targetPath, rootDir = process.cwd()) {
 }
 
 /**
- * Applies a unified diff to original content string.
- */
-export function applyUnifiedDiff(originalContent, diffContent) {
-  const lines = originalContent.split(/\r?\n/);
-  const diffLines = diffContent.split(/\r?\n/);
-  const result = [];
-  let origIdx = 0;
-
-  for (let i = 0; i < diffLines.length; i++) {
-    const line = diffLines[i];
-    if (line.startsWith('---') || line.startsWith('+++')) continue;
-
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunkMatch) {
-      const targetOrigLine = parseInt(hunkMatch[1], 10) - 1;
-      while (origIdx < targetOrigLine && origIdx < lines.length) {
-        result.push(lines[origIdx++]);
-      }
-      continue;
-    }
-
-    if (line.startsWith('+')) {
-      result.push(line.slice(1));
-    } else if (line.startsWith('-')) {
-      origIdx++;
-    } else if (line.startsWith(' ') || line === '') {
-      if (origIdx < lines.length) {
-        result.push(lines[origIdx++]);
-      }
-    }
-  }
-
-  while (origIdx < lines.length) {
-    result.push(lines[origIdx++]);
-  }
-
-  return result.join('\n');
-}
-
-/**
- * Applies an array of file change actions { filePath, content, language } to disk.
+ * Applies an array of file change actions { filePath, content } to disk.
  */
 export function applyFileChangesToDisk(fileActions, rootDir = process.cwd()) {
   const applied = [];
@@ -124,21 +84,8 @@ export function applyFileChangesToDisk(fileActions, rootDir = process.cwd()) {
     }
 
     const content = action.content ?? action.code ?? '';
-    let finalContent = content;
-    const isDiff = (action.language === 'diff' || content.includes('@@ -')) &&
-                   content.includes('--- ') && content.includes('+++ ');
-
-    if (isDiff && fs.existsSync(fullPath)) {
-      try {
-        const orig = fs.readFileSync(fullPath, 'utf8');
-        finalContent = applyUnifiedDiff(orig, content);
-      } catch {
-        // fallback to writing content directly if diff patch fails
-      }
-    }
-
-    fs.writeFileSync(fullPath, finalContent, 'utf8');
-    applied.push({ filePath: action.filePath, fullPath, isDiff });
+    fs.writeFileSync(fullPath, content, 'utf8');
+    applied.push({ filePath: action.filePath, fullPath });
   }
 
   return { applied, skipped };

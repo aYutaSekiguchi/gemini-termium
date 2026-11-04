@@ -41,7 +41,7 @@ To stay strictly compliant with Gemini's safety guidelines and avoid false-posit
 - **Request file inspection**: `send-me: <filepath>` (Gemini politely asks you to provide the file).
 - **Create or edit file**: `save: <filepath>` followed immediately by a fenced code block with full content.
 - **Run command**: `run-command:` followed by a fenced code block with the command for you to run.
-- *(Natural markdown like `cat README.md`, `// filepath:`, and legacy tags are also supported for backward compatibility).*
+- *(Natural markdown like `cat README.md` and `// filepath:` are also supported).*
 
 When Gemini proposes an action, an interactive approval card appears. If you approve (pressing `y`), the action runs locally and the result is placed into the prompt box and sent back to Gemini, so the conversation continues step by step.
 

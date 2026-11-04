@@ -1,8 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
-import os from 'node:os';
 import {
-  isPathInsideRootDir,
   applyFileChangesToDisk,
   executeShellCommand,
   scanWorkspaceFiles,
@@ -10,17 +8,37 @@ import {
   formatWorkspaceTree
 } from './workspace.js';
 
-export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222, skillName = 'pair-programmer' } = {}) {
+export function createBridgeServer({ cwd = process.cwd(), skillName = 'pair-programmer' } = {}) {
 
   const server = http.createServer(async (req, res) => {
-    // Enable CORS for Chrome Extension and Gemini web origin
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Restrict CORS to Gemini web origin and local test origin
+    const origin = req.headers.origin;
+    const isAllowedOrigin = !origin ||
+      origin === 'https://gemini.google.com' ||
+      origin.startsWith('http://127.0.0.1:') ||
+      origin.startsWith('http://localhost:');
+
+    if (origin && isAllowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
+      if (!isAllowedOrigin) {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    if (origin && !isAllowedOrigin) {
+      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Forbidden: CORS origin not allowed' }));
       return;
     }
 
@@ -50,22 +68,6 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222, skillN
           fileTree,
           totalFiles: files.length,
           skillName
-        });
-      }
-
-      // 3. Workspace file suggestions for @file
-      if (req.method === 'GET' && pathname === '/v1/workspace/files') {
-        const query = (url.searchParams.get('q') || '').toLowerCase().trim();
-        const allFiles = scanWorkspaceFiles(cwd, 500);
-        let matches = allFiles;
-        if (query) {
-          matches = allFiles.filter((f) => f.toLowerCase().includes(query));
-        }
-        return sendJson(200, {
-          ok: true,
-          query,
-          files: matches.slice(0, 20),
-          totalMatches: matches.length
         });
       }
 

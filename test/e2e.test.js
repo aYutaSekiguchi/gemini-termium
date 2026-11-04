@@ -297,50 +297,7 @@ console.log("hello from e2e test");</code></pre>
     assert.match(output, /e2e_command_success/);
   });
 
-  it('5. Intercepts agent write tool call [write path="..."] and writes file to disk upon approval', async () => {
-    const targetFilePath = path.join(tmpWorkspaceDir, 'e2e_sample.js');
-    assert.equal(fs.existsSync(targetFilePath), false, 'File should not exist before write');
-
-    // Simulate Gemini emitting [write path="e2e_sample.js"]...[/write]
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = '[write path="e2e_sample.js"]console.log("hello from e2e test");[/write]';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify Human-in-the-Loop card appears
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('e2e_sample.js'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must appear for [write]');
-
-    // User approves
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify file is created on disk
-    await pollUntil(async () => fs.existsSync(targetFilePath) ? true : null, 5000);
-    assert.equal(fs.existsSync(targetFilePath), true, 'File should now exist on disk');
-
-    const fileContent = fs.readFileSync(targetFilePath, 'utf8');
-    assert.match(fileContent, /hello from e2e test/);
-  });
-
-  it('6. Does not inject in-DOM Run Locally buttons and parses bare run-command block cleanly', async () => {
+  it('5. Does not inject in-DOM Run Locally buttons and parses bare run-command block cleanly', async () => {
     // 1. Verify that legacy .gtw-code-btn is NOT injected into the DOM
     const buttonsFound = await evaluateInPage(`
       (() => {
@@ -399,14 +356,14 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive command output from bare run-command block');
   });
 
-  it('7. Detects agent tool call tag, prompts Human-in-the-Loop card, and executes upon user approval', async () => {
-    // Inject a simulated agent response with %<write path="agent_test.txt">created by autonomous agent%</write>%
+  it('6. Detects agent natural save action, prompts Human-in-the-Loop card, and executes upon user approval', async () => {
+    // Inject a simulated agent response with natural save: agent_test.txt
     await evaluateInPage(`
       (() => {
         const resp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = '%<write path="agent_test.txt">created by autonomous agent%</write>%';
+        inner.textContent = 'save: agent_test.txt\\n\`\`\`\\ncreated by autonomous agent\\n\`\`\`';
         resp.appendChild(inner);
         document.body.appendChild(resp);
       })()
@@ -446,7 +403,7 @@ console.log("hello from e2e test");</code></pre>
     assert.match(editorResult, /Successfully saved 1 file change/);
   });
 
-  it('8. Intercepts /agent command and auto-injects workspace file tree into prompt', async () => {
+  it('7. Intercepts /agent command and auto-injects workspace file tree into prompt', async () => {
     // Write sample file into workspace so it appears in the tree
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'tree_sample.js'), 'console.log(123);');
 
@@ -480,138 +437,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });
 
-  it('9. Auto-detects file read in %<tool_call>%%%README.md%%%</tool_call>% and reads file on approval without zsh error', async () => {
-    // Write sample README.md file in workspace
-    fs.writeFileSync(path.join(tmpWorkspaceDir, 'README.md'), '# Autonomous Agent Documentation\nSafe TOS Compliant Execution');
-
-    // Simulate Gemini emitting %<tool_call>%%%README.md%%%</tool_call>% (the exact bug pattern reported by user)
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = '%<tool_call>%%%README.md%%%</tool_call>%';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify Human-in-the-Loop card appears with title for Read Workspace File (auto-detected, NOT Shell Command)
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('README.md'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must auto-detect file read and sanitize delimiters');
-
-    // User approves
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify prompt input contains the file contents formatted for reply
-    const editorResult = await pollUntil(async () => {
-      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('README.md') ? text : null;
-    }, 5000);
-
-    assert.ok(editorResult.includes('README.md'));
-    assert.ok(editorResult.includes('Safe TOS Compliant Execution'));
-    assert.ok(!editorResult.includes('zsh:fg:1'), 'Must not execute zsh job control fg error');
-  });
-
-  it('10. Detects bracket format [read]package.json[/read] and executes file read upon approval', async () => {
-    // Write sample package.json file in workspace
-    fs.writeFileSync(path.join(tmpWorkspaceDir, 'package.json'), '{"name": "termium-agent-test"}');
-
-    // Simulate Gemini emitting bracket format [read]package.json[/read] (immune to Google SafeHtml stripping)
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = '[read]package.json[/read]';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify Human-in-the-Loop card appears
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('package.json'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must appear for bracket [read] tag');
-
-    // User approves
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify prompt input contains the file contents formatted for reply
-    const editorResult = await pollUntil(async () => {
-      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
-      return text && text.includes('package.json') ? text : null;
-    }, 5000);
-
-    assert.ok(editorResult.includes('package.json'));
-    assert.ok(editorResult.includes('termium-agent-test'));
-  });
-
-  it('11. Prioritizes outer enclosing write over nested tags in write body', async () => {
-    // Simulate Gemini emitting write block containing nested [read] tag in body
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = '%<write path="nested_guide.md">Usage: [read]src/server.js[/read]%</write>%';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify modal appears for WRITE (nested [read] must NOT hijack outer write)
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('nested_guide.md'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must prioritize outer write operation');
-
-    // User approves
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify file written to disk with inner tag preserved as body text
-    const targetFile = path.join(tmpWorkspaceDir, 'nested_guide.md');
-    const written = await pollUntil(async () => {
-      return fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : null;
-    }, 5000);
-    assert.equal(written, 'Usage: [read]src/server.js[/read]');
-  });
-
-  it('12. Detects tool call from rendered DOM code block with language attribute', async () => {
+  it('8. Detects tool call from rendered DOM code block with language attribute', async () => {
     // Simulate rendered code block from markdown ```bash\necho "dom_bash_success"\n```
     await evaluateInPage(`
       (() => {
@@ -655,7 +481,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult.includes('terminal output'));
   });
 
-  it('13. Guards untagged bare response fallback against premature evaluation during active streaming', async () => {
+  it('9. Guards untagged bare response fallback against premature evaluation during active streaming', async () => {
     // Step 1: Simulate streaming chunk with aria-busy="true"
     await evaluateInPage(`
       (() => {
@@ -714,7 +540,7 @@ console.log("hello from e2e test");</code></pre>
     assert.equal(cardOnCompletion, true, 'Modal must trigger for completed bare file response');
   });
 
-  it('14. Resolves real editor excluding .ql-clipboard and clicks send button upon approval', async () => {
+  it('10. Resolves real editor excluding .ql-clipboard and clicks send button upon approval', async () => {
     // Write sample file
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'test-lib.js'), 'export const hello = "world";');
 
@@ -751,7 +577,7 @@ console.log("hello from e2e test");</code></pre>
         const resp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = '[read]test-lib.js[/read]';
+        inner.textContent = 'send-me: test-lib.js';
         resp.appendChild(inner);
         document.body.appendChild(resp);
       })()
@@ -802,10 +628,10 @@ console.log("hello from e2e test");</code></pre>
     assert.equal(verifyResult.submitted, true, 'Send button must be clicked');
   });
 
-  it('15. Captures "y" keyboard shortcut to approve tool call even when composer is actively focused', async () => {
+  it('11. Captures "y" keyboard shortcut to approve tool call even when composer is actively focused', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'key-approve-sample.txt'), 'keyboard_approve_success_payload');
 
-    // Simulate composer actively focused by user, then Gemini emits [read] tag
+    // Simulate composer actively focused by user, then Gemini emits send-me: request
     await evaluateInPage(`
       (() => {
         const ed = document.querySelector('rich-textarea [contenteditable="true"]');
@@ -814,7 +640,7 @@ console.log("hello from e2e test");</code></pre>
         const resp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = '[read]key-approve-sample.txt[/read]';
+        inner.textContent = 'send-me: key-approve-sample.txt';
         resp.appendChild(inner);
         document.body.appendChild(resp);
       })()
@@ -867,8 +693,8 @@ console.log("hello from e2e test");</code></pre>
     assert.match(editorResult, /keyboard_approve_success_payload/);
   });
 
-  it('16. Captures "n" keyboard shortcut to reject tool call even when composer is actively focused', async () => {
-    // Simulate composer actively focused by user, then Gemini emits [read] tag
+  it('12. Captures "n" keyboard shortcut to reject tool call even when composer is actively focused', async () => {
+    // Simulate composer actively focused by user, then Gemini emits send-me: request
     await evaluateInPage(`
       (() => {
         const ed = document.querySelector('rich-textarea [contenteditable="true"]');
@@ -877,7 +703,7 @@ console.log("hello from e2e test");</code></pre>
         const resp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = '[read]key-reject-sample.txt[/read]';
+        inner.textContent = 'send-me: key-reject-sample.txt';
         resp.appendChild(inner);
         document.body.appendChild(resp);
       })()
@@ -930,7 +756,7 @@ console.log("hello from e2e test");</code></pre>
     assert.match(editorResult, /decided not to execute/);
   });
 
-  it('17. Approves tool call via pointerdown event on Approve button', async () => {
+  it('13. Approves tool call via pointerdown event on Approve button', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'pointer-approve-sample.txt'), 'pointer_event_success_data');
 
     await evaluateInPage(`
@@ -938,7 +764,7 @@ console.log("hello from e2e test");</code></pre>
         const resp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = '[read]pointer-approve-sample.txt[/read]';
+        inner.textContent = 'send-me: pointer-approve-sample.txt';
         resp.appendChild(inner);
         document.body.appendChild(resp);
       })()
@@ -987,7 +813,7 @@ console.log("hello from e2e test");</code></pre>
     assert.match(editorResult, /pointer_event_success_data/);
   });
 
-  it('18. Detects file read action from natural markdown "cat <file>" bash code block', async () => {
+  it('14. Detects file read action from natural markdown "cat <file>" bash code block', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'natural-read.txt'), 'natural_markdown_read_content');
 
     await evaluateInPage(`
@@ -1033,7 +859,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive file content from natural cat block');
   });
 
-  it('19. Detects file write action from natural markdown "// filepath: <file>" code block with conversational explanation', async () => {
+  it('15. Detects file write action from natural markdown "// filepath: <file>" code block with conversational explanation', async () => {
     const targetFile = path.join(tmpWorkspaceDir, 'natural-write.js');
     if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
 
@@ -1079,7 +905,7 @@ console.log("hello from e2e test");</code></pre>
     assert.equal(content.trim(), 'console.log("natural_write_success");');
   });
 
-  it('20. Detects tool call from inline code block `cat inline-sample.txt` when no fenced block is present', async () => {
+  it('16. Detects tool call from inline code block `cat inline-sample.txt` when no fenced block is present', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'inline-sample.txt'), 'inline_code_detection_success');
 
     await evaluateInPage(`
@@ -1120,136 +946,10 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive file content from inline command detection');
   });
 
-  it('21. Detects code-snippet-escaped read tag ```[read]fenced-escape-sample.txt[/read]``` and executes file read upon approval', async () => {
-    fs.writeFileSync(path.join(tmpWorkspaceDir, 'fenced-escape-sample.txt'), 'fenced_escape_read_success');
-
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const p = document.createElement('p');
-        p.textContent = 'Here is the file inspection request:';
-        const pre = document.createElement('pre');
-        const code = document.createElement('code');
-        code.className = 'language-[read]';
-        code.textContent = '[read]fenced-escape-sample.txt[/read]';
-        pre.appendChild(code);
-        resp.appendChild(p);
-        resp.appendChild(pre);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify approval modal appears
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('fenced-escape-sample.txt'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped read tag');
-
-    // Approve action
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify file content read from workspace
-    const editorResult = await pollUntil(async () => {
-      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
-      return text && text.includes('fenced_escape_read_success') ? text : null;
-    }, 5000);
-    assert.ok(editorResult, 'Editor must receive file content from snippet-escaped read tag');
-  });
-
-  it('22. Detects code-snippet-escaped exec tag ```[exec]echo "fenced_exec_escape_success"[/exec]``` and executes command upon approval', async () => {
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = 'I will run the command:\\n\\n\`\`\`[exec]echo "fenced_exec_escape_success"[/exec]\`\`\`';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify approval modal appears
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('fenced_exec_escape_success'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped exec tag');
-
-    // Approve action
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify command output submitted to editor
-    const editorResult = await pollUntil(async () => {
-      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
-      return text && text.includes('fenced_exec_escape_success') ? text : null;
-    }, 5000);
-    assert.ok(editorResult, 'Editor must receive command output from snippet-escaped exec tag');
-  });
-
-  it('23. Detects code-snippet-escaped write tag ```[write path="..."]...[/write]``` and writes file upon approval', async () => {
-    const targetFile = path.join(tmpWorkspaceDir, 'fenced-write-sample.txt');
-    if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
-
-    await evaluateInPage(`
-      (() => {
-        const resp = document.createElement('model-response');
-        const inner = document.createElement('div');
-        inner.className = 'model-response-text';
-        inner.textContent = 'Saving file:\\n\\n\`\`\`[write path="fenced-write-sample.txt"]\\nfenced write payload data\\n[/write]\`\`\`';
-        resp.appendChild(inner);
-        document.body.appendChild(resp);
-      })()
-    `);
-
-    // Verify approval modal appears
-    const cardFound = await pollUntil(async () => {
-      return evaluateInPage(`
-        (() => {
-          const card = document.querySelector('.gtw-agent-approval-card');
-          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('fenced-write-sample.txt'));
-        })()
-      `);
-    }, 5000);
-    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped write tag');
-
-    // Approve action
-    await evaluateInPage(`
-      (() => {
-        const btn = document.querySelector('.gtw-agent-btn-approve');
-        if (btn) btn.click();
-      })()
-    `);
-
-    // Verify file written to disk
-    await pollUntil(async () => fs.existsSync(targetFile) ? true : null, 5000);
-    assert.equal(fs.existsSync(targetFile), true);
-    const content = fs.readFileSync(targetFile, 'utf8');
-    assert.equal(content.trim(), 'fenced write payload data');
-  });
-
-  it('24. Never parses tool calls from user-query even if prompt contains ```[read]path/to/file[/read]```', async () => {
+  it('17. Never parses tool calls from user-query even if prompt contains send-me: or run-command:', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'actual-model-file.txt'), 'actual_assistant_response_content');
 
-    // Step 1: User sends prompt containing code snippet read tag, model response NOT generated yet
+    // Step 1: User sends prompt containing action templates, model response NOT generated yet
     await evaluateInPage(`
       (() => {
         const turn = document.createElement('div');
@@ -1257,7 +957,7 @@ console.log("hello from e2e test");</code></pre>
 
         const userQ = document.createElement('user-query');
         const userQContent = document.createElement('user-query-content');
-        userQContent.textContent = 'Please check my code: \`\`\`[read]path/to/file[/read]\`\`\` or [read]user-query-fake.txt[/read]';
+        userQContent.textContent = 'Please check my code:\\n\\nsend-me: fake-user-file.txt\\n\\nrun-command:\\n\`\`\`bash\\necho "fake_user_command"\\n\`\`\`';
         userQ.appendChild(userQContent);
         turn.appendChild(userQ);
 
@@ -1279,13 +979,13 @@ console.log("hello from e2e test");</code></pre>
         const modelResp = document.createElement('model-response');
         const inner = document.createElement('div');
         inner.className = 'model-response-text';
-        inner.textContent = 'I will inspect the workspace file:\\n\\n\`\`\`[read]actual-model-file.txt[/read]\`\`\`';
+        inner.textContent = 'I will inspect the workspace file:\\n\\nsend-me: actual-model-file.txt';
         modelResp.appendChild(inner);
         latestTurn.appendChild(modelResp);
       })()
     `);
 
-    // Verify modal appears ONLY for the assistant action (actual-model-file.txt), NOT path/to/file
+    // Verify modal appears ONLY for the assistant action (actual-model-file.txt), NOT fake-user-file.txt
     const cardFoundOnModel = await pollUntil(async () => {
       return evaluateInPage(`
         (() => {
@@ -1312,7 +1012,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive file content from assistant model response');
   });
 
-  it('25. Detects natural "send-me: <file>" file request and reads file upon approval', async () => {
+  it('18. Detects natural "send-me: <file>" file request and reads file upon approval', async () => {
     fs.writeFileSync(path.join(tmpWorkspaceDir, 'adhd-send-sample.json'), '{"adhd": "send_me_success"}');
 
     await evaluateInPage(`
@@ -1353,7 +1053,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive file content from send-me: request');
   });
 
-  it('26. Detects natural "save: <file>" followed by code block and writes file upon approval', async () => {
+  it('19. Detects natural "save: <file>" followed by code block and writes file upon approval', async () => {
     const targetFile = path.join(tmpWorkspaceDir, 'adhd-save-sample.js');
     if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
 
@@ -1394,7 +1094,7 @@ console.log("hello from e2e test");</code></pre>
     assert.equal(content.trim(), 'console.log("adhd_save_payload");');
   });
 
-  it('27. Detects natural "run-command:" followed by code block and executes command upon approval', async () => {
+  it('20. Detects natural "run-command:" followed by code block and executes command upon approval', async () => {
     await evaluateInPage(`
       (() => {
         const resp = document.createElement('model-response');
@@ -1433,7 +1133,7 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult, 'Editor must receive command output from run-command: action');
   });
 
-  it('28. Never misidentifies "Bash" decoration header at top of code block as command', async () => {
+  it('21. Never misidentifies "Bash" decoration header at top of code block as command', async () => {
     await evaluateInPage(`
       (() => {
         const resp = document.createElement('model-response');

@@ -31,12 +31,18 @@ test('createBridgeServer - HTTP API endpoints integration', async () => {
     assert.ok(wsData.files.includes('src/hello.js'));
     assert.equal(wsData.skillName, 'pair-programmer');
 
-    // 3. Workspace file suggestion
-    const filesRes = await fetch(`http://127.0.0.1:${port}/v1/workspace/files?q=hello`);
-    assert.equal(filesRes.status, 200);
-    const filesData = await filesRes.json();
-    assert.equal(filesData.ok, true);
-    assert.ok(filesData.files.includes('src/hello.js'));
+    // 3. CORS origin policy check
+    const allowedCorsRes = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      headers: { Origin: 'https://gemini.google.com' }
+    });
+    assert.equal(allowedCorsRes.status, 200);
+    assert.equal(allowedCorsRes.headers.get('access-control-allow-origin'), 'https://gemini.google.com');
+
+    const blockedCorsRes = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      headers: { Origin: 'https://malicious-site.com' }
+    });
+    assert.equal(blockedCorsRes.status, 403);
+    assert.equal(blockedCorsRes.headers.get('access-control-allow-origin'), null);
 
     // 4. Action: Apply file change
     const applyRes = await fetch(`http://127.0.0.1:${port}/v1/actions/apply`, {

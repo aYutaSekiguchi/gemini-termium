@@ -5,7 +5,6 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   isPathInsideRootDir,
-  applyUnifiedDiff,
   applyFileChangesToDisk,
   executeShellCommand,
   scanWorkspaceFiles,
@@ -30,32 +29,6 @@ test('isPathInsideRootDir - security boundary enforcement', () => {
   } finally {
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
   }
-});
-
-test('applyUnifiedDiff - patches content cleanly', () => {
-  const original = [
-    'line 1',
-    'line 2 to change',
-    'line 3',
-    'line 4'
-  ].join('\n');
-
-  const diff = [
-    '--- a/file.txt',
-    '+++ b/file.txt',
-    '@@ -1,4 +1,4 @@',
-    ' line 1',
-    '-line 2 to change',
-    '+line 2 modified',
-    ' line 3',
-    ' line 4'
-  ].join('\n');
-
-  const patched = applyUnifiedDiff(original, diff);
-  const lines = patched.split('\n');
-  assert.equal(lines[1], 'line 2 modified');
-  assert.equal(lines[0], 'line 1');
-  assert.equal(lines[2], 'line 3');
 });
 
 test('applyFileChangesToDisk - writes and patches files within root', () => {

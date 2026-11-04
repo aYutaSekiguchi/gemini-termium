@@ -840,118 +840,11 @@
       return modelEl;
     }
 
-    function extractLatestActions() {
-      const latest = findLatestModelResponse();
-      if (!latest) return { fileActions: [], commandActions: [] };
-
-      // Hide UI noise elements in-place on the live DOM so .innerText preserves block layout and line breaks,
-      // and UI artifacts (e.g. language label "Bash" in code header or copy buttons) never pollute rawText
-      const noise = latest.querySelectorAll(
-        'user-query, user-query-content, .user-query, .code-block-decoration, .code-block-header, code-block-decoration, .header-formatted, copy-button, download-button, gem-icon-button, button, message-actions, .buttons-container-v2, .actions-container-v2, .gtw-code-header, .gtw-code-btn'
-      );
-      const hidden = [];
-      for (let i = 0; i < noise.length; i++) {
-        const el = noise[i];
-        hidden.push({ el, prevDisplay: el.style.display });
-        el.style.display = 'none';
-      }
-      let rawText = '';
-      try {
-        rawText = (latest.innerText || latest.textContent || '').trim();
-      } finally {
-        for (let i = 0; i < hidden.length; i++) {
-          hidden[i].el.style.display = hidden[i].prevDisplay;
-        }
-      }
-      const fileActions = [];
-      const commandActions = [];
-
-      // 1. Direct tag parsing for %<write path="...">% or <write path="...">
-      const writeMatches = Array.from(rawText.matchAll(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?(?:>|%>)([\s\S]*?)(?:%<\/|<\/)write(?:>|%>)/gi));
-      for (const wm of writeMatches) {
-        fileActions.push({
-          filePath: wm[1].trim(),
-          content: wm[2]
-        });
-      }
-
-      // 2. Direct tag parsing for %<tool_call>% or <tool_call>
-      const cmdMatches = Array.from(rawText.matchAll(/(?:%<|<)tool_call(?:>|%>)([\s\S]*?)(?:%<\/|<\/)tool_call(?:>|%>)/gi));
-      for (const cm of cmdMatches) {
-        commandActions.push({
-          language: 'bash',
-          content: cm[1].trim()
-        });
-      }
-
-      const codeBlocks = Array.from(latest.querySelectorAll('pre, code-block, [class*="code-block"]'));
-
-      for (const block of codeBlocks) {
-        const codeElem = block.querySelector('code') || block;
-        const content = (codeElem.innerText || codeElem.textContent || '').trim();
-        if (!content) continue;
-
-        const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
-        const langMatch = classes.match(/(?:language|lang)-([a-z0-9_+-]+)/i) ||
-                          block.getAttribute('data-language');
-        const lang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
-
-        const isCmd = ['bash', 'sh', 'shell', 'zsh', 'terminal'].includes(lang) ||
-                      content.startsWith('$ ') || content.startsWith('npm ') ||
-                      content.startsWith('git ') || content.startsWith('cargo ') ||
-                      content.startsWith('docker ');
-
-        let filePath = null;
-        const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
-                         content.match(/^(?:File:\s*)([^\s\n]+)/im);
-        if (explicit) {
-          filePath = explicit[1].trim();
-        } else {
-          const firstLines = content.split('\n').slice(0, 3).join('\n');
-          const commentPath = firstLines.match(/(?:\/\/|#|\/\*|<!--)\s*([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/);
-          if (commentPath && !commentPath[1].startsWith('http')) {
-            filePath = commentPath[1].trim();
-          }
-        }
-
-        if (!filePath && block.previousElementSibling) {
-          const prevText = block.previousElementSibling.textContent || '';
-          const prevMatch = prevText.match(/`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`/) ||
-                            prevText.match(/(?:file|path|ファイル):\s*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?/i);
-          if (prevMatch) {
-            filePath = prevMatch[1].trim();
-          }
-        }
-
-        if (isCmd) {
-          commandActions.push({
-            language: lang || 'bash',
-            content: content.replace(/^\$\s+/gm, '').trim()
-          });
-        } else if (filePath) {
-          fileActions.push({
-            language: lang,
-            filePath,
-            content
-          });
-        }
-      }
-
-      return { fileActions, commandActions };
-    }
-
     // 8. Action handlers
     async function handleRunCommand(cmdString = null) {
-      let commandToRun = cmdString;
+      const commandToRun = (cmdString || '').trim();
       if (!commandToRun) {
-        const { commandActions } = extractLatestActions();
-        if (commandActions.length > 0) {
-          commandToRun = commandActions[0].content;
-        }
-      }
-
-      if (!commandToRun) {
-        showToast('⚠ No shell command found to execute.', 'error');
+        showToast('⚠ Usage: /run <command>', 'error');
         return;
       }
 
@@ -1045,12 +938,6 @@ Recommend only one action at a time.${taskPart}`;
         showToast(`🤖 Template prepared with @${targetSkill} and file tree. Add your task and press Enter.`, 'info', 5000);
       }
     }
-
-    // Export interceptor for programmatic/testing use
-    window.__GTW_HANDLE_INTERCEPT__ = handleSendIntercept;
-    window.__GTW_SUBMIT_CURRENT_PROMPT__ = submitCurrentPrompt;
-    window.__GTW_FIND_PROMPT_EDITOR__ = findPromptEditor;
-    window.__GTW_SET_PROMPT_TEXT__ = setPromptText;
 
     // Listen for input changes to show slash command autocomplete menu
     document.addEventListener('input', () => {
@@ -1261,161 +1148,6 @@ Recommend only one action at a time.${taskPart}`;
         }
       }
 
-      // 1a. Fenced Code Snippet Write with explicit [/write]:
-      // ```[write path="..."]...[/write]``` or ```write path="..."\n...[/write]```
-      const fencedWriteWithCloseRegex = /(?:```|~~~)(?:\[write\s+path=["']?([^"'\]\n]+)["']?\]|write\s+path=["']?([^"'\n]+)["']?)([\s\S]*?)\[\/write\]\s*(?:```|~~~)?/gi;
-      while ((m = fencedWriteWithCloseRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1] || m[2]);
-        const content = (m[3] || '').trim();
-        if (filePath) {
-          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
-        }
-      }
-
-      // 0b. Fenced Code Snippet Write without [/write]:
-      // ```[write path="..."]\ncontent\n```
-      const fencedWriteFenceOnlyRegex = /(?:```|~~~)(?:\[write\s+path=["']?([^"'\]\n]+)["']?\]|write\s+path=["']?([^"'\n]+)["']?)([\s\S]*?)(?:```|~~~)/gi;
-      while ((m = fencedWriteFenceOnlyRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1] || m[2]);
-        const content = (m[3] || '').trim();
-        if (filePath) {
-          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
-        }
-      }
-
-      // 0c. Fenced Code Snippet Read with explicit [/read]:
-      // ```[read]path[/read]``` or ```read\npath\n[/read]```
-      const fencedReadWithCloseRegex = /(?:```|~~~)(?:\[read\]|read)\s*\r?\n?([\s\S]*?)\[\/read\]\s*(?:```|~~~)?/gi;
-      while ((m = fencedReadWithCloseRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        if (filePath) {
-          addCandidate('read', 'Read Workspace File', { filePath }, m);
-        }
-      }
-
-      // 0d. Fenced Code Snippet Read without [/read]:
-      // ```[read]\npath\n``` or ```read\npath\n```
-      const fencedReadFenceOnlyRegex = /(?:```|~~~)(?:\[read\]|read)\s*\r?\n?([\s\S]*?)(?:```|~~~)/gi;
-      while ((m = fencedReadFenceOnlyRegex.exec(rawText)) !== null) {
-        let clean = m[1].replace(/\[\/read\]/gi, '');
-        const filePath = sanitizeTagValue(clean);
-        if (filePath) {
-          addCandidate('read', 'Read Workspace File', { filePath }, m);
-        }
-      }
-
-      // 0e. Fenced Code Snippet Exec with explicit closing tag:
-      // ```[exec]cmd[/exec]``` or ```exec\ncmd\n[/exec]```
-      const fencedExecWithCloseRegex = /(?:```|~~~)(?:\[(?:exec|tool_call|command|bash)\]|(?:exec|tool_call|command))\s*\r?\n?([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]\s*(?:```|~~~)?/gi;
-      while ((m = fencedExecWithCloseRegex.exec(rawText)) !== null) {
-        const rawCmd = sanitizeTagValue(m[1]);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
-          } else {
-            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
-          }
-        }
-      }
-
-      // 0f. Fenced Code Snippet Exec without closing tag:
-      // ```[exec]\ncmd\n``` or ```exec\ncmd\n```
-      const fencedExecFenceOnlyRegex = /(?:```|~~~)(?:\[(?:exec|tool_call|command|bash)\]|(?:exec|tool_call|command))\s*\r?\n?([\s\S]*?)(?:```|~~~)/gi;
-      while ((m = fencedExecFenceOnlyRegex.exec(rawText)) !== null) {
-        let clean = m[1].replace(/\[\/(?:exec|tool_call|command|bash)\]/gi, '');
-        const rawCmd = sanitizeTagValue(clean);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
-          } else {
-            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
-          }
-        }
-      }
-
-      // 1. Bracket Write: [write path="..."]content[/write]
-      const bracketWriteRegex = /\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/gi;
-      while ((m = bracketWriteRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        const content = (m[2] || '').trim();
-        if (filePath) {
-          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
-        }
-      }
-
-      // 2. XML / Percent Write: %<write path="...">content%</write>% or <write path="...">content</write>
-      const xmlWriteRegex = /(?:%<|<)write\s+path=["']?([^"'>]+)["']?\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)write\s*(?:>%|>|%)/gi;
-      while ((m = xmlWriteRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        let content = m[2] || '';
-        content = content.replace(/^%*\r?\n?/, '').replace(/\r?\n?%*$/, '');
-        if (filePath) {
-          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
-        }
-      }
-
-      // 3. Bracket Read: [read]path[/read] or [read: path]
-      const bracketReadRegex = /\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/gi;
-      while ((m = bracketReadRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        if (filePath) {
-          addCandidate('read', 'Read Workspace File', { filePath }, m);
-        }
-      }
-      const bracketReadColonRegex = /\[read:\s*([^\]]+)\]/gi;
-      while ((m = bracketReadColonRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        if (filePath) {
-          addCandidate('read', 'Read Workspace File', { filePath }, m);
-        }
-      }
-
-      // 4. XML / Percent Read: %<read>%path%</read>% or <read>path</read>
-      const xmlReadRegex = /(?:%<|<)read\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)read\s*(?:>%|>|%)/gi;
-      while ((m = xmlReadRegex.exec(rawText)) !== null) {
-        const filePath = sanitizeTagValue(m[1]);
-        if (filePath) {
-          addCandidate('read', 'Read Workspace File', { filePath }, m);
-        }
-      }
-
-      // 5. Bracket Exec: [exec]cmd[/exec] or [tool_call]cmd[/tool_call]
-      const bracketExecRegex = /\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/gi;
-      while ((m = bracketExecRegex.exec(rawText)) !== null) {
-        const rawCmd = sanitizeTagValue(m[1]);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
-          } else {
-            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
-          }
-        }
-      }
-      const bracketExecColonRegex = /\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/gi;
-      while ((m = bracketExecColonRegex.exec(rawText)) !== null) {
-        const rawCmd = sanitizeTagValue(m[1]);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
-          } else {
-            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
-          }
-        }
-      }
-
-      // 6. XML / Percent Exec: %<exec>cmd%</exec>% or <exec>cmd</exec>
-      const xmlExecRegex = /(?:%<|<)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)/gi;
-      while ((m = xmlExecRegex.exec(rawText)) !== null) {
-        const rawCmd = sanitizeTagValue(m[1]);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
-          } else {
-            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
-          }
-        }
-      }
-
       // Deduplicate identical spans (e.g. from overlapping regex passes)
       const uniqueCandidates = [];
       for (const cand of candidates) {
@@ -1446,21 +1178,7 @@ Recommend only one action at a time.${taskPart}`;
         };
       }
 
-      // 7. Delimiter-bleed or stripped fallback: %%filename.ext%% (Turn 1 bug)
-      const percentFileMatch = rawText.match(/%%([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)%%/);
-      if (percentFileMatch) {
-        const filePath = sanitizeTagValue(percentFileMatch[1]);
-        if (looksLikeFilePath(filePath)) {
-          return {
-            type: 'read',
-            title: 'Read Workspace File',
-            filePath,
-            rawTag: percentFileMatch[0]
-          };
-        }
-      }
-
-      // 8. Sanitized Bare Response fallback: ONLY when response generation is COMPLETED!
+      // Sanitized Bare Response fallback: ONLY when response generation is COMPLETED!
       // Guards against partial streaming tokens (e.g. initial chunk "package.json") triggering premature read
       if (isComplete) {
         const cleanLines = rawText
@@ -1586,80 +1304,8 @@ Recommend only one action at a time.${taskPart}`;
 
         const lang = (rawLang || headerLang).replace(/^[\[<]+|[\]>]+$/g, '').trim();
 
-        // 0. Inner structured tags inside rendered code block (e.g. ```[read]file[/read]``` rendered into <pre><code>)
-        const innerBracketWrite = content.match(/\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/i);
-        if (innerBracketWrite) {
-          const filePath = sanitizeTagValue(innerBracketWrite[1]);
-          if (filePath) {
-            return {
-              type: 'write',
-              title: 'Write Workspace File',
-              filePath,
-              content: (innerBracketWrite[2] || '').trim(),
-              rawTag: block.outerHTML || content
-            };
-          }
-        }
-
-        const innerBracketRead = content.match(/\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/i) ||
-                                 content.match(/\[read:\s*([^\]]+)\]/i);
-        if (innerBracketRead) {
-          const filePath = sanitizeTagValue(innerBracketRead[1]);
-          if (filePath) {
-            return {
-              type: 'read',
-              title: 'Read Workspace File',
-              filePath,
-              rawTag: block.outerHTML || content
-            };
-          }
-        }
-
-        const innerBracketExec = content.match(/\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/i) ||
-                                 content.match(/\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/i);
-        if (innerBracketExec) {
-          const rawCmd = sanitizeTagValue(innerBracketExec[1]);
-          if (rawCmd && !/^(?:bash|sh|zsh|shell|terminal|powershell|cmd)$/i.test(rawCmd)) {
-            if (looksLikeFilePath(rawCmd)) {
-              return {
-                type: 'read',
-                title: 'Read Workspace File',
-                filePath: rawCmd,
-                rawTag: block.outerHTML || content
-              };
-            }
-            return {
-              type: 'tool_call',
-              title: 'Execute Shell Command',
-              command: rawCmd,
-              rawTag: block.outerHTML || content
-            };
-          }
-        }
-
-        // 1. Read block: ```read or ```[read]
-        if (lang === 'read') {
-          const filePath = sanitizeTagValue(content);
-          if (filePath) {
-            return {
-              type: 'read',
-              title: 'Read Workspace File',
-              filePath,
-              rawTag: block.outerHTML || content
-            };
-          }
-        }
-
-        // 2. Write block: ```write or code block with file path metadata
+        // 1. Write block: code block with file path metadata or preceded by save: <file>
         let writePath = block.getAttribute('data-filepath') || block.getAttribute('data-path');
-        if (!writePath && (lang === 'write' || lang.startsWith('write'))) {
-          const pathInLang = lang.match(/write[:=]([^\s]+)/);
-          if (pathInLang) writePath = pathInLang[1];
-        }
-        if (!writePath) {
-          const tagMatch = content.match(/(?:%<|<|\[)write\s+path=["']?([^"'\]>]+)["']?/i);
-          if (tagMatch) writePath = tagMatch[1];
-        }
         if (!writePath) {
           const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
                            content.match(/^(?:File:\s*)([^\s\n]+)/im);
@@ -2027,9 +1673,6 @@ Recommend only one action at a time.${taskPart}`;
         cleanup();
         processedToolCallIds.add(callId);
         showToast('✖ Action rejected by user.', 'info', 3000);
-        if (responseEl) {
-          responseEl.classList.add('gtw-agent-rejected');
-        }
         const editor = findPromptEditor();
         if (editor) {
           setPromptText(editor, `I decided not to execute this action (${toolCall.title}). What alternative approach do you suggest?`);

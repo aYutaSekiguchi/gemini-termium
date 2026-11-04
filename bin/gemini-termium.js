@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { locateChromeBinary } from '../src/chromeManager.js';
 import {
@@ -16,11 +13,6 @@ import {
 } from '../src/profileManager.js';
 import { ensureTermiumBinary } from '../scripts/setup-termium.js';
 import { startBackend } from '../src/backend.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-const EXTENSION_DIR = path.resolve(PROJECT_ROOT, 'extension');
 
 async function main() {
   const args = process.argv.slice(2);
