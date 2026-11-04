@@ -83,6 +83,7 @@ export async function startBackend({
   cdpPort = null,
   grpcPort = null,
   bridgePort = null,
+  skillName = 'termium',
   isHeadless = true
 } = {}) {
   if (!chromeBin) {
@@ -159,7 +160,7 @@ export async function startBackend({
     const wsUrl = await waitForChromeWsUrl(activeCdpPort, chromeProcess);
 
     // 4. Start local workspace bridge HTTP server
-    bridgeServer = createBridgeServer({ cwd, cdpPort: activeCdpPort });
+    bridgeServer = createBridgeServer({ cwd, cdpPort: activeCdpPort, skillName });
     const boundBridgePort = await bridgeServer.listen(activeBridgePort);
 
     // 5. Start in-process Termium gRPC server

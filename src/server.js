@@ -10,7 +10,7 @@ import {
   formatWorkspaceTree
 } from './workspace.js';
 
-export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {}) {
+export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222, skillName = 'termium' } = {}) {
 
   const server = http.createServer(async (req, res) => {
     // Enable CORS for Chrome Extension and Gemini web origin
@@ -48,7 +48,8 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {})
           name: path.basename(cwd),
           files,
           fileTree,
-          totalFiles: files.length
+          totalFiles: files.length,
+          skillName
         });
       }
 

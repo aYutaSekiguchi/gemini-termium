@@ -982,8 +982,23 @@
       const wsData = await callBridge('get_workspace');
       const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
       const wsTree = wsData?.fileTree || '(empty workspace)';
+      let targetSkill = wsData?.skillName || workspaceInfo?.skillName || 'termium';
 
-      const promptInstruction = `I am working on a local development project in "${wsName}".
+      let task = (arg || '').trim();
+      // Allow overriding skill name via prompt: /agent @custom-skill task...
+      if (task.startsWith('@')) {
+        const parts = task.split(/\s+/);
+        targetSkill = parts[0].slice(1);
+        task = parts.slice(1).join(' ').trim();
+      }
+
+      let fullPrompt = '';
+      if (targetSkill && targetSkill !== 'none') {
+        const taskPart = task ? `${task}\n\n` : '';
+        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}`;
+      } else {
+        const taskPart = task ? `\n\nTask:\n${task}` : '\n\nTask:\n';
+        fullPrompt = `I am working on a local development project in "${wsName}".
 Here is the repository file structure for context:
 
 Workspace files:
@@ -993,17 +1008,16 @@ Please act as my collaborative pair programmer on this project.
 - When recommending files to inspect or verify, feel free to suggest standard CLI commands (such as \`cat path/to/file\`, \`npm test\`, or \`git status\`).
 - When proposing code changes or new files, include the relative target file path in a comment at the top of the code block (e.g. \`// filepath: path/to/file\`).
 
-Suggest the next logical step and recommend files to inspect as we work together on this repository.`;
+Suggest the next logical step and recommend files to inspect as we work together on this repository.${taskPart}`;
+      }
 
-      if (arg) {
-        const fullPrompt = `${promptInstruction}\n\nTask:\n${arg}`;
+      if (task) {
         setPromptText(editor, fullPrompt);
-        showToast('🤖 Pair programming prompt prepared with file tree. Starting...', 'info', 3000);
+        showToast(`🤖 Invoking @${targetSkill} with workspace file tree. Starting...`, 'info', 3000);
         setTimeout(() => submitCurrentPrompt(), 300);
       } else {
-        const template = `${promptInstruction}\n\nTask:\n`;
-        setPromptText(editor, template);
-        showToast('🤖 Template with file tree inserted. Add your request and press Enter.', 'info', 6000);
+        setPromptText(editor, fullPrompt);
+        showToast(`🤖 Template prepared with @${targetSkill} and file tree. Add your task and press Enter.`, 'info', 5000);
       }
     }
 

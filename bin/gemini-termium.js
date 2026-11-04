@@ -41,6 +41,7 @@ Options:
   --grpc-port <number>     Termium gRPC port (default: auto free port starting at 50051)
   --renderer <proto>       Rendering protocol: auto, kitty, sixel, tcell (default: auto)
   --palette <name>         Color palette: adaptive, websafe, plan9 (default: websafe)
+  --skill <name>           Gemini Skill name to invoke for /agent (default: termium)
   --browser <path>         Custom Google Chrome / Chromium executable path
 
 Features:
@@ -121,9 +122,15 @@ Features:
   const paletteIdx = args.findIndex((a) => a === '--palette');
   const palette = paletteIdx !== -1 && args[paletteIdx + 1] ? args[paletteIdx + 1] : 'websafe';
 
+  const skillIdx = args.findIndex((a) => a === '--skill');
+  const skillName = skillIdx !== -1 && args[skillIdx + 1] ? args[skillIdx + 1] : 'termium';
+
   console.log(`✦ Starting Gemini Termium Bridge...`);
   console.log(`  📁 Workspace: ${cwd}`);
   console.log(`  👤 Profile:   ${profileDir}`);
+  if (skillName && skillName !== 'none') {
+    console.log(`  🤖 Skill:     @${skillName}`);
+  }
   if (isSeeded) {
     console.log(`  🔑 Auth:      ✔ Inherited Google login from Chrome profile`);
   } else if (!isProfileLoggedIn(profileDir)) {
@@ -138,6 +145,7 @@ Features:
     cdpPort,
     grpcPort,
     bridgePort,
+    skillName,
     isHeadless: !isGui
   });
 
