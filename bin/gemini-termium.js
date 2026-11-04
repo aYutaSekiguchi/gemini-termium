@@ -61,9 +61,9 @@ Features:
   // Resolve custom or system browser
   const browserIdx = args.findIndex((a) => a === '--browser');
   const customBrowser = browserIdx !== -1 && args[browserIdx + 1] ? args[browserIdx + 1] : null;
-  const browserBin = locateChromeBinary(customBrowser);
+  const chromeBin = locateChromeBinary(customBrowser);
 
-  if (!browserBin) {
+  if (!chromeBin) {
     console.error('✖ Error: No compatible Google Chrome or Chromium binary found.');
     console.error('  Please install Google Chrome or specify its path with --browser.');
     process.exit(1);
@@ -83,7 +83,7 @@ Features:
       '--app=https://gemini.google.com'
     ];
 
-    const child = spawn(browserBin, loginArgs, { stdio: 'inherit' });
+    const child = spawn(chromeBin, loginArgs, { stdio: 'inherit' });
     child.on('close', () => {
       if (isProfileLoggedIn(MASTER_PROFILE_DIR)) {
         console.log(`\n✔ Master Google login saved! All projects will now automatically start logged in.`);

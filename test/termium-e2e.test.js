@@ -97,15 +97,27 @@ test('Termium Full Integration & E2E: Unified Backend + Termium Client communica
   assert.ok(typeof state.generation !== 'undefined', 'Generation must exist');
   console.log(`[E2E] Browser state generation: ${state.generation}, tabs: ${state.tabs?.length || 0}`);
 
-  // 4. Verify Screenshot Capture
+  // 4. Verify Screenshot Capture (retry if page is currently navigating)
   console.log(`[E2E] Capturing screenshot via Termium gRPC...`);
-  const frame = await new Promise((resolve, reject) => {
-    client.captureScreenshot({ format: 'png' }, (err, res) => {
-      if (err) reject(err);
-      else resolve(res);
-    });
-  });
+  let frame = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      frame = await new Promise((resolve, reject) => {
+        client.captureScreenshot({ format: 'png' }, (err, res) => {
+          if (err) reject(err);
+          else resolve(res);
+        });
+      });
+      if (frame && frame.data && frame.data.length > 0) break;
+    } catch (err) {
+      if (err.message.includes('Page changed') || err.code === 9) {
+        await new Promise((r) => setTimeout(r, 200));
+        continue;
+      }
+      throw err;
+    }
+  }
 
-  assert.ok(frame.data.length > 0, 'Screenshot data must not be empty');
+  assert.ok(frame && frame.data.length > 0, 'Screenshot data must not be empty');
   console.log(`[E2E] Successfully received screenshot frame: ${frame.data.length} bytes`);
 });
