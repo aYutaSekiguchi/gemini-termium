@@ -145,19 +145,30 @@ Features:
   console.log(`  ⚡ Bridge:    http://127.0.0.1:${backend.bridgePort}`);
   console.log(`  🖥 gRPC Port:  ${backend.grpcPort}`);
 
-  const cleanup = async () => {
+  let clientProcess = null;
+  let isCleaningUp = false;
+
+  const cleanup = async (exitCode = 0) => {
+    if (isCleaningUp) return;
+    isCleaningUp = true;
     try { syncCookiesToMaster(profileDir); } catch {}
-    await backend.close();
+    if (clientProcess && !clientProcess.killed) {
+      try { clientProcess.kill('SIGTERM'); } catch {}
+    }
+    if (backend) {
+      try { await backend.close(); } catch {}
+    }
+    process.exit(exitCode);
   };
 
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', () => cleanup(130));
+  process.on('SIGTERM', () => cleanup(143));
+  process.on('SIGHUP', () => cleanup(129));
 
   if (isGui) {
     console.log(`🌐 Running in desktop GUI mode. Close browser window to exit.`);
     backend.chromeProcess.on('close', async (code) => {
-      await cleanup();
-      process.exit(code || 0);
+      await cleanup(code || 0);
     });
     return;
   }
@@ -171,11 +182,10 @@ Features:
     'https://gemini.google.com'
   ];
 
-  const clientProcess = spawn(termiumBin, termiumArgs, { stdio: 'inherit' });
+  clientProcess = spawn(termiumBin, termiumArgs, { stdio: 'inherit' });
 
   clientProcess.on('close', async (code) => {
-    await cleanup();
-    process.exit(code || 0);
+    await cleanup(code || 0);
   });
 }
 

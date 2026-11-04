@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import {
   getWorkspaceProfileDir,
   isProfileLoggedIn,
   cloneProfile,
-  ensureWorkspaceProfile
+  ensureWorkspaceProfile,
+  cleanStaleProfileLocks,
+  isProcessRunning
 } from '../src/profileManager.js';
 
 test('getWorkspaceProfileDir - deterministic and sanitized path', () => {
@@ -68,4 +71,69 @@ test('cloneProfile - copies auth state and skips locks/caches', () => {
     try { fs.rmSync(src, { recursive: true, force: true }); } catch {}
     try { fs.rmSync(dest, { recursive: true, force: true }); } catch {}
   }
+});
+
+test('cleanStaleProfileLocks - cleans broken symlinks, stale locks, and socket files', () => {
+  const tmp = path.join(os.tmpdir(), `gtw-lock-test-${Date.now()}`);
+  fs.mkdirSync(tmp, { recursive: true });
+
+  try {
+    // Create broken symlinks mimicking abrupt crash or orphan process
+    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'lockfile'];
+    for (const name of lockFiles) {
+      try {
+        fs.symlinkSync(`non-existent-target-${Date.now()}-999999`, path.join(tmp, name));
+      } catch {
+        fs.writeFileSync(path.join(tmp, name), 'stale');
+      }
+    }
+
+    // Verify lock files exist in filesystem (even as broken symlinks)
+    for (const name of lockFiles) {
+      assert.ok(fs.lstatSync(path.join(tmp, name), { throwIfNoEntry: false }) !== undefined);
+    }
+
+    cleanStaleProfileLocks(tmp);
+
+    // Verify all lock files are cleaned up
+    for (const name of lockFiles) {
+      assert.equal(fs.lstatSync(path.join(tmp, name), { throwIfNoEntry: false }), undefined);
+    }
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('cleanStaleProfileLocks - terminates orphan process and removes locks', async () => {
+  const tmp = path.join(os.tmpdir(), `gtw-orphan-unit-${Date.now()}`);
+  fs.mkdirSync(tmp, { recursive: true });
+
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);', '--chrome-test-flag']);
+  try {
+    const lockPath = path.join(tmp, 'SingletonLock');
+    fs.symlinkSync(`test-host-${dummy.pid}`, lockPath);
+
+    cleanStaleProfileLocks(tmp);
+
+    // Wait a tick for OS signal handling
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Verify lock is removed and process was terminated
+    assert.equal(fs.lstatSync(lockPath, { throwIfNoEntry: false }), undefined);
+    assert.ok(dummy.killed || !isProcessRunning(dummy.pid));
+  } finally {
+    try { dummy.kill('SIGKILL'); } catch {}
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('isProcessRunning - correctly identifies running and non-existent processes', () => {
+  // Current process is alive
+  assert.equal(isProcessRunning(process.pid), true);
+  // Invalid PID
+  assert.equal(isProcessRunning(-1), false);
+  assert.equal(isProcessRunning(0), false);
+  assert.equal(isProcessRunning(null), false);
+  // Extremely high PID unlikely to exist
+  assert.equal(isProcessRunning(99999999), false);
 });

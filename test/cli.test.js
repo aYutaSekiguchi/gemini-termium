@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildChromeArgs } from '../src/backend.js';
+import { buildChromeArgs, waitForChromeWsUrl } from '../src/backend.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,4 +68,23 @@ test('buildChromeArgs: omits blocked flags and ensures botguard integrity', () =
   assert.ok(argStr.includes('--user-agent='), 'Must provide clean desktop user agent');
   assert.ok(!argStr.includes('HeadlessChrome'), 'Must not leak HeadlessChrome in user agent');
   assert.ok(argStr.includes('--window-size=1280,800'), 'Must provide standard desktop window size');
+});
+
+test('waitForChromeWsUrl: fails fast with descriptive error if Chrome exits with code 21', async () => {
+  const dummyProcess = {
+    exitCode: 21,
+    lastStderr: () => 'SingletonLock: Process 12345 holding lock'
+  };
+
+  await assert.rejects(
+    async () => {
+      await waitForChromeWsUrl(9999, dummyProcess, 5, 10);
+    },
+    (err) => {
+      assert.ok(err.message.includes('code 21 (Profile in use)'), 'Should detect exit code 21');
+      assert.ok(err.message.includes('profile directory is locked by another process'), 'Should explain profile lock');
+      assert.ok(err.message.includes('Process 12345 holding lock'), 'Should include stderr');
+      return true;
+    }
+  );
 });

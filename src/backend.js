@@ -6,6 +6,7 @@ import { createBridgeServer } from './server.js';
 import { startAutoInjector } from './cdpClient.js';
 import { createTermiumGrpcServer } from './termiumGrpcService.js';
 import { locateChromeBinary, findAvailablePort } from './chromeManager.js';
+import { cleanStaleProfileLocks } from './profileManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,9 +42,25 @@ export function buildChromeArgs({ profileDir, cdpPort, isHeadless = true } = {})
   return chromeArgs;
 }
 
-export async function waitForChromeWsUrl(cdpPort, maxRetries = 40, intervalMs = 150) {
+export async function waitForChromeWsUrl(cdpPort, chromeProcess = null, maxRetries = 40, intervalMs = 150) {
+  if (typeof chromeProcess === 'number') {
+    maxRetries = chromeProcess;
+    chromeProcess = null;
+  }
+
   for (let i = 0; i < maxRetries; i++) {
-    await new Promise((r) => setTimeout(r, intervalMs));
+    if (chromeProcess && chromeProcess.exitCode !== null) {
+      const code = chromeProcess.exitCode;
+      const stderr = typeof chromeProcess.lastStderr === 'function'
+        ? chromeProcess.lastStderr()
+        : (chromeProcess.lastStderr || '');
+      const detail = stderr ? `\nChrome stderr: ${stderr.trim()}` : '';
+      if (code === 21) {
+        throw new Error(`Chrome exited prematurely with code 21 (Profile in use). The profile directory is locked by another process.${detail}`);
+      }
+      throw new Error(`Chrome exited prematurely with code ${code}.${detail}`);
+    }
+
     try {
       const res = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
       if (res.ok) {
@@ -53,6 +70,8 @@ export async function waitForChromeWsUrl(cdpPort, maxRetries = 40, intervalMs = 
         }
       }
     } catch {}
+
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(`Timeout waiting for Chrome DevTools on port ${cdpPort}`);
 }
@@ -70,6 +89,11 @@ export async function startBackend({
     throw new Error('No compatible Google Chrome / Chromium binary found.');
   }
 
+  // 0. Clean stale locks and orphan processes for this profile before port binding
+  if (profileDir) {
+    cleanStaleProfileLocks(profileDir);
+  }
+
   // 1. Resolve available ports
   const activeCdpPort = cdpPort || (await findAvailablePort(9222));
   const activeBridgePort = bridgePort || (await findAvailablePort(45140));
@@ -83,9 +107,19 @@ export async function startBackend({
   });
 
   console.log(`✦ Launching Chrome (${isHeadless ? 'headless' : 'desktop window'})...`);
+  let lastStderr = '';
   const chromeProcess = spawn(chromeBin, chromeArgs, {
-    stdio: isHeadless ? 'ignore' : 'inherit'
+    stdio: isHeadless ? ['ignore', 'ignore', 'pipe'] : 'inherit'
   });
+  if (chromeProcess.stderr) {
+    chromeProcess.stderr.on('data', (chunk) => {
+      lastStderr += chunk.toString();
+      if (lastStderr.length > 2000) {
+        lastStderr = lastStderr.slice(-2000);
+      }
+    });
+  }
+  chromeProcess.lastStderr = () => lastStderr;
 
   let isClosed = false;
   let bridgeServer = null;
@@ -111,6 +145,9 @@ export async function startBackend({
         try { chromeProcess.kill('SIGKILL'); } catch {}
       }, 1000).unref();
     }
+    if (profileDir) {
+      cleanStaleProfileLocks(profileDir);
+    }
   };
 
   chromeProcess.on('exit', () => {
@@ -119,7 +156,7 @@ export async function startBackend({
 
   try {
     // 3. Wait for DevTools WS endpoint
-    const wsUrl = await waitForChromeWsUrl(activeCdpPort);
+    const wsUrl = await waitForChromeWsUrl(activeCdpPort, chromeProcess);
 
     // 4. Start local workspace bridge HTTP server
     bridgeServer = createBridgeServer({ cwd, cdpPort: activeCdpPort });

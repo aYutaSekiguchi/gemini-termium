@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { execSync } from 'node:child_process';
 import { locateSystemChromeProfile } from './chromeManager.js';
 
 export const CONFIG_ROOT = path.join(os.homedir(), '.config', 'gemini-termium');
@@ -165,6 +166,96 @@ export function syncCookiesToMaster(workspaceProfileDir) {
 }
 
 /**
+ * Checks if a PID is alive.
+ */
+export function isProcessRunning(pid) {
+  if (!pid || typeof pid !== 'number' || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+/**
+ * Checks if a process belongs to Chrome/Chromium.
+ */
+export function isChromeProcess(pid, profileDir = '') {
+  try {
+    if (process.platform === 'linux') {
+      const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      return cmdline.toLowerCase().includes('chrom') || (profileDir && cmdline.includes(profileDir));
+    } else if (process.platform === 'darwin') {
+      const out = execSync(`ps -p ${pid} -o command=`, { stdio: ['pipe', 'pipe', 'ignore'], encoding: 'utf8' });
+      return out.toLowerCase().includes('chrom') || (profileDir && out.includes(profileDir));
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Cleans up stale profile locks (SingletonLock, SingletonSocket, SingletonCookie, lockfile)
+ * and safely terminates orphan Chrome processes holding the profile lock.
+ *
+ * @param {string} profileDir - Path to the Chromium user-data-dir
+ * @returns {boolean}
+ */
+export function cleanStaleProfileLocks(profileDir) {
+  if (!profileDir || !fs.existsSync(profileDir)) return false;
+
+  const lockFiles = [
+    'SingletonLock',
+    'SingletonSocket',
+    'SingletonCookie',
+    'lockfile'
+  ];
+
+  const singletonLockPath = path.join(profileDir, 'SingletonLock');
+  try {
+    const stat = fs.lstatSync(singletonLockPath, { throwIfNoEntry: false });
+    if (stat) {
+      let target = '';
+      if (stat.isSymbolicLink()) {
+        target = fs.readlinkSync(singletonLockPath);
+      } else {
+        target = fs.readFileSync(singletonLockPath, 'utf8');
+      }
+      const match = target.match(/-(\d+)(?:\0|$)/);
+      const pid = match ? parseInt(match[1], 10) : null;
+      if (pid && pid !== process.pid && isProcessRunning(pid)) {
+        if (isChromeProcess(pid, profileDir)) {
+          try {
+            process.kill(pid, 'SIGTERM');
+          } catch {}
+          const start = Date.now();
+          while (Date.now() - start < 300) {
+            if (!isProcessRunning(pid)) break;
+          }
+          if (isProcessRunning(pid)) {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Remove stale lock files (using rmSync to handle broken symlinks cleanly)
+  for (const name of lockFiles) {
+    const lockPath = path.join(profileDir, name);
+    try {
+      fs.rmSync(lockPath, { force: true });
+    } catch {}
+  }
+
+  return true;
+}
+
+/**
  * Ensures a workspace profile is ready and fully synchronized with the master profile.
  *
  * @param {string} cwd - Workspace root
@@ -172,6 +263,7 @@ export function syncCookiesToMaster(workspaceProfileDir) {
  */
 export function ensureWorkspaceProfile(cwd = process.cwd()) {
   const profileDir = getWorkspaceProfileDir(cwd);
+  cleanStaleProfileLocks(profileDir);
   let isSeeded = false;
   let isFirstTime = false;
 
