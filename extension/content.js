@@ -9,7 +9,7 @@
   if (window.__GTW_INITIALIZED__) return;
   window.__GTW_INITIALIZED__ = true;
 
-  const port = window.__GEMINI_TERMIUM_PORT__ || window.__GEMINI_TERMWAY_PORT__ || 45140;
+  const port = window.__GEMINI_TERMIUM_PORT__ || 45140;
   const BRIDGE_URL = `http://127.0.0.1:${port}`;
 
   let workspaceInfo = null;

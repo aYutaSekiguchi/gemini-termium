@@ -81,10 +81,10 @@ test('applyFileChangesToDisk - writes and patches files within root', () => {
 });
 
 test('executeShellCommand - captures stdout and exit code', async () => {
-  const res = await executeShellCommand('echo "test-termway-123"');
+  const res = await executeShellCommand('echo "test-termium-123"');
   assert.equal(res.ok, true);
   assert.equal(res.code, 0);
-  assert.ok(res.stdout.includes('test-termway-123'));
+  assert.ok(res.stdout.includes('test-termium-123'));
 
   // Defensively strips leading/trailing percent signs and backticks
   const percentRes = await executeShellCommand('%%echo "sanitized-percent"%%');

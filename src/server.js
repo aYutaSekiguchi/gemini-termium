@@ -9,10 +9,8 @@ import {
   readFileFromDisk,
   formatWorkspaceTree
 } from './workspace.js';
-import { ChromeDevToolsClient } from './cdpClient.js';
 
 export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {}) {
-  const cdpClient = new ChromeDevToolsClient(cdpPort);
 
   const server = http.createServer(async (req, res) => {
     // Enable CORS for Chrome Extension and Gemini web origin

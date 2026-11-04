@@ -10,7 +10,7 @@ import {
 
 /**
  * Minimal Chrome DevTools Protocol (CDP) client using native Node.js WebSockets.
- * Handles automated file upload injection via DOM.setFileInputFiles without OS dialogs.
+ * Used to inject the in-page bridge script into the Gemini tab and relay bridge calls.
  */
 
 export class ChromeDevToolsClient {
@@ -126,49 +126,6 @@ export class ChromeDevToolsClient {
     });
   }
 
-  /**
-   * Automates uploading local files to Gemini without opening an OS file dialog.
-   *
-   * @param {string[]} filePaths - Absolute file paths to attach
-   */
-  async injectFiles(filePaths) {
-    await this.connect();
-
-    // Enable file chooser interception
-    await this.send('Page.setInterceptFileChooserDialog', { enabled: true });
-
-    // Set up listener for the file chooser open event
-    const chooserPromise = this.waitForEvent('Page.fileChooserOpened', 10000);
-
-    // Trigger upload button click in Gemini DOM
-    await this.send('Runtime.evaluate', {
-      expression: `
-        (() => {
-          const btn = document.querySelector('button[aria-label*="Upload"], button[aria-label*="ファイル"], button[aria-label*="Add"], button[data-test-id="upload-button"]') ||
-                      document.querySelector('input[type="file"]');
-          if (btn) {
-            btn.click();
-            return true;
-          }
-          return false;
-        })()
-      `,
-      returnByValue: true
-    });
-
-    const chooserEvent = await chooserPromise;
-
-    // Inject file paths directly into the backend DOM node
-    await this.send('DOM.setFileInputFiles', {
-      files: filePaths,
-      backendNodeId: chooserEvent.backendNodeId
-    });
-
-    // Disable interception once handled
-    await this.send('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
-    return { ok: true, files: filePaths };
-  }
-
   disconnect() {
     if (this.ws) {
       try { this.ws.close(); } catch {}
@@ -213,7 +170,6 @@ export function startAutoInjector({
               const rawScript = fs.readFileSync(scriptPath, 'utf8');
               const customizedScript =
                 `window.__GEMINI_TERMIUM_PORT__ = ${bridgePort};\n` +
-                `window.__GEMINI_TERMWAY_PORT__ = ${bridgePort};\n` +
                 rawScript;
 
               const ws = new WebSocket(geminiPage.webSocketDebuggerUrl);
