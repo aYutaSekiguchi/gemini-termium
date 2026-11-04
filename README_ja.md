@@ -86,7 +86,7 @@ flowchart TD
 ### インストール
 
 ```bash
-git clone https://github.com/your-username/gemini-termium.git
+git clone https://github.com/aYutaSekiguchi/gemini-termium.git
 cd gemini-termium
 npm install
 npm run setup   # OS / CPU に合った Termium バイナリをダウンロード
