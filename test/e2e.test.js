@@ -1216,4 +1216,70 @@ console.log("hello from e2e test");</code></pre>
     const content = fs.readFileSync(targetFile, 'utf8');
     assert.equal(content.trim(), 'fenced write payload data');
   });
+
+  it('24. Never parses tool calls from user-query even if prompt contains ```[read]path/to/file[/read]```', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'actual-model-file.txt'), 'actual_assistant_response_content');
+
+    // Step 1: User sends prompt containing code snippet read tag, model response NOT generated yet
+    await evaluateInPage(`
+      (() => {
+        const turn = document.createElement('div');
+        turn.className = 'conversation-container';
+
+        const userQ = document.createElement('user-query');
+        const userQContent = document.createElement('user-query-content');
+        userQContent.textContent = 'Please check my code: \`\`\`[read]path/to/file[/read]\`\`\` or [read]user-query-fake.txt[/read]';
+        userQ.appendChild(userQContent);
+        turn.appendChild(userQ);
+
+        document.body.appendChild(turn);
+      })()
+    `);
+
+    // Wait 300ms to allow MutationObserver to fire and verify NO modal appears for user query
+    await new Promise((r) => setTimeout(r, 300));
+    const cardFoundOnUserQuery = await evaluateInPage(`Boolean(document.querySelector('.gtw-agent-approval-card'))`);
+    assert.equal(cardFoundOnUserQuery, false, 'Modal must NEVER appear for actions inside user-query prompt');
+
+    // Step 2: Model response appears with the assistant action
+    await evaluateInPage(`
+      (() => {
+        const containers = document.querySelectorAll('.conversation-container');
+        const latestTurn = containers[containers.length - 1];
+
+        const modelResp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'I will inspect the workspace file:\\n\\n\`\`\`[read]actual-model-file.txt[/read]\`\`\`';
+        modelResp.appendChild(inner);
+        latestTurn.appendChild(modelResp);
+      })()
+    `);
+
+    // Verify modal appears ONLY for the assistant action (actual-model-file.txt), NOT path/to/file
+    const cardFoundOnModel = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('actual-model-file.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFoundOnModel, true, 'Approval modal must appear only for the assistant model response');
+
+    // Approve the assistant tool call
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify editor receives content of actual-model-file.txt
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('actual_assistant_response_content') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive file content from assistant model response');
+  });
 });

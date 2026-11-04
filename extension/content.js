@@ -832,12 +832,45 @@
     }
 
     // 7. Code block & action extraction
-    function extractLatestActions() {
-      const responses = Array.from(document.querySelectorAll('model-response, .conversation-container'));
-      if (responses.length === 0) return { fileActions: [], commandActions: [] };
+    function findLatestModelResponse() {
+      // Find all top-level turn elements in document order
+      const allTurnElements = Array.from(document.querySelectorAll(
+        'user-query, .user-query, user-query-content, model-response, .model-response-text, structured-content-container.model-response-text'
+      ));
+      if (allTurnElements.length === 0) return null;
 
-      const latest = responses[responses.length - 1];
-      const rawText = latest.innerText || latest.textContent || '';
+      // Keep only top-level items among matched elements (exclude nested children)
+      const topTurns = allTurnElements.filter(el => {
+        return !allTurnElements.some(parent => parent !== el && parent.contains(el));
+      });
+
+      if (topTurns.length === 0) return null;
+      const latestTurn = topTurns[topTurns.length - 1];
+
+      // If the latest turn in the DOM is a user query, the model has NOT responded yet!
+      if (latestTurn.matches('user-query, .user-query, user-query-content') ||
+          latestTurn.closest('user-query, .user-query, user-query-content, rich-textarea, .bottom-container')) {
+        return null;
+      }
+
+      // If the element itself is a model-response or inside one:
+      const modelEl = latestTurn.matches('model-response') ? latestTurn : (latestTurn.closest('model-response') || latestTurn);
+      return modelEl;
+    }
+
+    function extractLatestActions() {
+      const latest = findLatestModelResponse();
+      if (!latest) return { fileActions: [], commandActions: [] };
+
+      let rawText = '';
+      const userQueries = latest.querySelectorAll('user-query, user-query-content, .user-query');
+      if (userQueries.length > 0) {
+        const clone = latest.cloneNode(true);
+        clone.querySelectorAll('user-query, user-query-content, .user-query').forEach(u => u.remove());
+        rawText = clone.innerText || clone.textContent || '';
+      } else {
+        rawText = latest.innerText || latest.textContent || '';
+      }
       const fileActions = [];
       const commandActions = [];
 
@@ -995,7 +1028,7 @@
       let fullPrompt = '';
       if (targetSkill && targetSkill !== 'none') {
         const taskPart = task ? `${task}\n\n` : '';
-        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step. Output your action inside a markdown code snippet (\`\`\`[read]path/to/file[/read]\`\`\` or \`\`\`[exec]command[/exec]\`\`\`).`;
+        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step using code snippets (e.g. \`\`\`[read]...[/read]\`\`\` or \`\`\`[exec]...[/exec]\`\`\`).`;
       } else {
         const taskPart = task ? `\n\nTask:\n${task}` : '\n\nTask:\n';
         fullPrompt = `I am working on a local development project in "${wsName}".
@@ -1006,9 +1039,9 @@ ${wsTree}
 
 Please act as my collaborative pair programmer on this project.
 When recommending actions, output structured commands inside code snippets:
-- Read file: \`\`\`[read]path/to/file[/read]\`\`\` or \`\`\`bash\ncat path/to/file\n\`\`\`
-- Run command: \`\`\`[exec]command[/exec]\`\`\` or \`\`\`bash\ncommand\n\`\`\`
-- Write file: \`\`\`[write path="path/to/file"]\n...\n[/write]\`\`\` or \`\`\`lang\n// filepath: path/to/file\n...code...\n\`\`\`
+- Read file: \`\`\`[read]...\`\`\` or \`\`\`bash\ncat <filepath>\n\`\`\`
+- Run command: \`\`\`[exec]...\`\`\` or \`\`\`bash\n<command>\n\`\`\`
+- Write file: \`\`\`[write path="..."]\n...\n[/write]\`\`\` or \`\`\`lang\n// filepath: <filepath>\n...code...\n\`\`\`
 
 Suggest the next logical step and recommend files to inspect as we work together on this repository.${taskPart}`;
       }
@@ -1115,9 +1148,9 @@ Suggest the next logical step and recommend files to inspect as we work together
 
     // 10. In-DOM Code Block Action Buttons
     function decorateCodeBlocks() {
-      const codeContainers = document.querySelectorAll(
+      const codeContainers = Array.from(document.querySelectorAll(
         'model-response pre:not([data-gtw-decorated]), model-response code-block:not([data-gtw-decorated]), .conversation-container pre:not([data-gtw-decorated]), .conversation-container code-block:not([data-gtw-decorated])'
-      );
+      )).filter(b => !b.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container'));
 
       codeContainers.forEach((block) => {
         block.setAttribute('data-gtw-decorated', 'true');
@@ -1500,9 +1533,13 @@ Suggest the next logical step and recommend files to inspect as we work together
 
     function parseToolCallsFromDOM(responseEl) {
       if (!responseEl) return null;
+      if (responseEl.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container')) {
+        return null;
+      }
 
       // Inspect rendered code blocks: pre, code-block, .code-block
-      const codeBlocks = Array.from(responseEl.querySelectorAll('pre, code-block, .code-block'));
+      const codeBlocks = Array.from(responseEl.querySelectorAll('pre, code-block, .code-block'))
+        .filter(b => !b.closest('user-query, user-query-content, .user-query, rich-textarea, .bottom-container'));
       for (const block of codeBlocks) {
         const codeElem = block.querySelector('code') || block;
         const content = (codeElem.innerText || codeElem.textContent || '').trim();
@@ -1659,13 +1696,30 @@ Suggest the next logical step and recommend files to inspect as we work together
     }
 
     function checkForAgentToolCalls() {
-      // Prioritize model-response elements so we never mistakenly match on user-query prompt text
-      let responses = Array.from(document.querySelectorAll('model-response'));
-      if (responses.length === 0) {
-        responses = Array.from(document.querySelectorAll('.conversation-container'));
+      const latest = findLatestModelResponse();
+      if (!latest) {
+        // If an active modal is showing and a new user turn has arrived without model response,
+        // dismiss the superseded modal
+        if (activeAgentModal) {
+          const allTurnElements = Array.from(document.querySelectorAll(
+            'user-query, .user-query, user-query-content, model-response, .model-response-text'
+          ));
+          if (allTurnElements.length > 0) {
+            const topTurns = allTurnElements.filter(el => !allTurnElements.some(parent => parent !== el && parent.contains(el)));
+            const lastTurn = topTurns[topTurns.length - 1];
+            if (lastTurn && (lastTurn.matches('user-query, .user-query, user-query-content') || lastTurn.closest('user-query, .user-query, user-query-content'))) {
+              if (typeof activeModalCleanup === 'function') {
+                activeModalCleanup();
+              } else {
+                try { activeAgentModal.remove(); } catch {}
+                activeAgentModal = null;
+                activeModalResponse = null;
+              }
+            }
+          }
+        }
+        return;
       }
-      if (responses.length === 0) return;
-      const latest = responses[responses.length - 1];
 
       // If active modal is showing for an older response that has been superseded by a new turn, dismiss it
       if (activeAgentModal) {
@@ -1690,7 +1744,15 @@ Suggest the next logical step and recommend files to inspect as we work together
       }
 
       const isComplete = isResponseComplete(latest);
-      const rawText = latest.innerText || latest.textContent || '';
+      let rawText = '';
+      const userQueries = latest.querySelectorAll('user-query, user-query-content, .user-query');
+      if (userQueries.length > 0) {
+        const clone = latest.cloneNode(true);
+        clone.querySelectorAll('user-query, user-query-content, .user-query').forEach(u => u.remove());
+        rawText = clone.innerText || clone.textContent || '';
+      } else {
+        rawText = latest.innerText || latest.textContent || '';
+      }
 
       // 1. First parse structured text tags with enclosing block priority
       let toolCall = parseToolCallsFromText(rawText, { isComplete });
