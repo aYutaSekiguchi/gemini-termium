@@ -1,0 +1,4 @@
+node_modules/
+vendor/termium/bin/
+.DS_Store
+*.log

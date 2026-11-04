@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Termway Bridge",
+  "version": "1.0.0",
+  "description": "Bridges Google Gemini WebUI with local terminal workspace for native slash commands, file patching, and command execution.",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}

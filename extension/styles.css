@@ -1,0 +1,165 @@
+/* Gemini Termway Bridge UI Styles */
+
+.gtw-hud-badge {
+  position: fixed;
+  bottom: 12px;
+  right: 16px;
+  background: rgba(20, 24, 32, 0.88);
+  backdrop-filter: blur(8px);
+  color: #e0e6ed;
+  border: 1px solid rgba(100, 150, 255, 0.35);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.gtw-hud-badge.connected {
+  border-color: #22c55e;
+}
+
+.gtw-hud-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.gtw-hud-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: #181d28;
+  color: #ffffff;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  z-index: 1000000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  max-width: 450px;
+}
+
+.gtw-hud-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.gtw-hud-toast.success { border-color: #22c55e; }
+.gtw-hud-toast.error { border-color: #ef4444; }
+
+/* Floating Console for /run outputs */
+.gtw-console-drawer {
+  position: fixed;
+  bottom: 60px;
+  right: 24px;
+  width: 520px;
+  max-height: 380px;
+  background: #11151c;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  z-index: 999998;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.gtw-console-header {
+  background: #1a202c;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #2d3748;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.gtw-console-body {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #e2e8f0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  max-height: 320px;
+  line-height: 1.45;
+}
+
+/* Injected code block action buttons */
+.gtw-code-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 6px;
+  transition: all 0.15s ease;
+}
+
+.gtw-code-btn:hover {
+  background: #334155;
+  color: #f8fafc;
+  border-color: #64748b;
+}
+
+.gtw-code-btn.apply:hover {
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+.gtw-code-btn.run:hover {
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
+
+/* Slash command suggestion dropdown */
+.gtw-autocomplete-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  background: #1e232d;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 1000000;
+  overflow: hidden;
+}
+
+.gtw-autocomplete-item {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #cbd5e1;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.gtw-autocomplete-item:hover, .gtw-autocomplete-item.selected {
+  background: #2563eb;
+  color: #ffffff;
+}
