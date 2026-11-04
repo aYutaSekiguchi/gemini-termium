@@ -310,7 +310,8 @@
           border: 2px solid #38bdf8;
           border-radius: 12px;
           box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
-          z-index: 1000000;
+          z-index: 2147483647 !important;
+          pointer-events: auto !important;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           color: #f8fafc;
           overflow: hidden;
@@ -380,7 +381,7 @@
         .gtw-agent-btn-approve {
           background: #16a34a;
           color: #ffffff;
-          border: none;
+          border: 2px solid transparent;
           padding: 6px 14px;
           border-radius: 6px;
           font-weight: 600;
@@ -389,21 +390,31 @@
           display: flex;
           align-items: center;
           gap: 6px;
+          pointer-events: auto !important;
+          user-select: none;
+          outline: none;
         }
-        .gtw-agent-btn-approve:hover {
+        .gtw-agent-btn-approve:hover, .gtw-agent-btn-approve:focus {
           background: #22c55e;
+          border-color: #ffffff;
+          box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.4);
         }
         .gtw-agent-btn-reject {
           background: #475569;
           color: #f1f5f9;
-          border: none;
+          border: 2px solid transparent;
           padding: 6px 12px;
           border-radius: 6px;
           font-size: 12px;
           cursor: pointer;
+          pointer-events: auto !important;
+          user-select: none;
+          outline: none;
         }
-        .gtw-agent-btn-reject:hover {
+        .gtw-agent-btn-reject:hover, .gtw-agent-btn-reject:focus {
           background: #64748b;
+          border-color: #ffffff;
+          box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.4);
         }
       `;
       (document.head || document.documentElement).appendChild(styleEl);
@@ -1182,6 +1193,7 @@ To interact with the local workspace (reading files, writing code, executing com
     // 11. Autonomous Agent Engine with Human-in-the-Loop Confirmation
     let activeAgentModal = null;
     let activeModalResponse = null;
+    let activeModalCleanup = null;
     const processedToolCallIds = new Set();
 
     function sanitizeTagValue(val) {
@@ -1429,7 +1441,15 @@ To interact with the local workspace (reading files, writing code, executing com
         if (!writePath) {
           const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
                            content.match(/^(?:File:\s*)([^\s\n]+)/im);
-          if (explicit) writePath = explicit[1];
+          if (explicit) {
+            const isExplicitTool = block.hasAttribute('data-tool') ||
+                                   block.classList.contains('agent-tool') ||
+                                   responseEl.hasAttribute('data-agent') ||
+                                   (codeBlocks.length === 1 && !responseEl.querySelector('p:not(.model-response-label-announcer *)'));
+            if (isExplicitTool) {
+              writePath = explicit[1];
+            }
+          }
         }
         if (writePath) {
           return {
@@ -1488,14 +1508,22 @@ To interact with the local workspace (reading files, writing code, executing com
       // If active modal is showing for an older response that has been superseded by a new turn, dismiss it
       if (activeAgentModal) {
         if (activeModalResponse && activeModalResponse !== latest) {
-          try { activeAgentModal.remove(); } catch {}
-          activeAgentModal = null;
-          activeModalResponse = null;
+          if (typeof activeModalCleanup === 'function') {
+            activeModalCleanup();
+          } else {
+            try { activeAgentModal.remove(); } catch {}
+            activeAgentModal = null;
+            activeModalResponse = null;
+          }
         } else if (document.body.contains(activeAgentModal)) {
           return;
         } else {
-          activeAgentModal = null;
-          activeModalResponse = null;
+          if (typeof activeModalCleanup === 'function') {
+            activeModalCleanup();
+          } else {
+            activeAgentModal = null;
+            activeModalResponse = null;
+          }
         }
       }
 
@@ -1519,7 +1547,9 @@ To interact with the local workspace (reading files, writing code, executing com
     }
 
     function showAgentApprovalModal(toolCall, callId, responseEl) {
-      if (activeAgentModal) {
+      if (typeof activeModalCleanup === 'function') {
+        activeModalCleanup();
+      } else if (activeAgentModal) {
         try { activeAgentModal.remove(); } catch {}
         activeAgentModal = null;
         activeModalResponse = null;
@@ -1589,27 +1619,49 @@ To interact with the local workspace (reading files, writing code, executing com
       const rejectBtn = document.createElement('button');
       rejectBtn.className = 'gtw-agent-btn-reject';
       rejectBtn.textContent = '✖ Reject [n]';
+      rejectBtn.setAttribute('tabindex', '0');
 
       const approveBtn = document.createElement('button');
       approveBtn.className = 'gtw-agent-btn-approve';
       approveBtn.textContent = '✔ Approve & Reply [y]';
+      approveBtn.setAttribute('tabindex', '0');
 
       actions.appendChild(rejectBtn);
       actions.appendChild(approveBtn);
       modal.appendChild(actions);
 
+      modal.setAttribute('tabindex', '-1');
       document.body.appendChild(modal);
 
+      // Unfocus composer and shift active focus to the Approve button immediately
+      try {
+        const ed = findPromptEditor();
+        if (ed && typeof ed.blur === 'function') ed.blur();
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+          document.activeElement.blur();
+        }
+      } catch {}
+      approveBtn.focus();
+      setTimeout(() => {
+        try { approveBtn.focus(); } catch {}
+      }, 50);
+
+      let isActionHandled = false;
+
       const cleanup = () => {
-        window.removeEventListener('keydown', onKey);
+        window.removeEventListener('keydown', onKey, true);
         if (modal.parentNode) modal.parentNode.removeChild(modal);
         if (activeAgentModal === modal) {
           activeAgentModal = null;
           activeModalResponse = null;
+          activeModalCleanup = null;
         }
       };
+      activeModalCleanup = cleanup;
 
       const handleApprove = async () => {
+        if (isActionHandled) return;
+        isActionHandled = true;
         cleanup();
         processedToolCallIds.add(callId);
         showToast(`⚡ Human approved: executing ${toolCall.type}...`, 'info', 3000);
@@ -1649,38 +1701,99 @@ To interact with the local workspace (reading files, writing code, executing com
       };
 
       const handleReject = () => {
+        if (isActionHandled) return;
+        isActionHandled = true;
         cleanup();
         processedToolCallIds.add(callId);
         showToast('✖ Action rejected by user.', 'info', 3000);
+        if (responseEl) {
+          responseEl.classList.add('gtw-agent-rejected');
+        }
         const editor = findPromptEditor();
         if (editor) {
           setPromptText(editor, `%<tool_result>%\n[User rejected this tool call: ${toolCall.title}]\n%</tool_result>%`);
+          try { editor.focus(); } catch {}
         }
       };
 
-      approveBtn.onclick = handleApprove;
-      rejectBtn.onclick = handleReject;
+      const onApproveTrigger = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+        handleApprove();
+      };
+
+      const onRejectTrigger = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+        handleReject();
+      };
+
+      // Support click, mousedown, and pointerdown for maximum terminal & browser event compatibility
+      approveBtn.onclick = onApproveTrigger;
+      approveBtn.addEventListener('click', onApproveTrigger, true);
+      approveBtn.addEventListener('mousedown', onApproveTrigger, true);
+      approveBtn.addEventListener('pointerdown', onApproveTrigger, true);
+
+      rejectBtn.onclick = onRejectTrigger;
+      rejectBtn.addEventListener('click', onRejectTrigger, true);
+      rejectBtn.addEventListener('mousedown', onRejectTrigger, true);
+      rejectBtn.addEventListener('pointerdown', onRejectTrigger, true);
 
       const onKey = (e) => {
-        const tag = (e.target?.tagName || '').toLowerCase();
-        if (tag === 'textarea' || tag === 'input' || e.target?.isContentEditable) {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            handleReject();
-          }
+        // Intercept keys in capture phase regardless of activeElement to ensure modal responds
+        const key = (e.key || '').toLowerCase();
+        const code = e.code || '';
+        const target = e.target;
+        const isTargetInput = target && (
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable ||
+          target.getAttribute('contenteditable') === 'true'
+        );
+
+        if (key === 'y' || code === 'KeyY') {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          handleApprove();
           return;
         }
 
-        if (e.key === 'y' || e.key === 'Y' || e.key === 'Enter') {
+        if (key === 'n' || code === 'KeyN' || key === 'escape' || code === 'Escape') {
           e.preventDefault();
-          handleApprove();
-        } else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
-          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
           handleReject();
+          return;
+        }
+
+        if (key === 'enter' || code === 'Enter') {
+          // If focus is inside an input/textarea outside the modal, do not intercept Enter
+          if (isTargetInput && !modal.contains(target)) {
+            return;
+          }
+          if (document.activeElement === rejectBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            handleReject();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          handleApprove();
         }
       };
 
-      window.addEventListener('keydown', onKey);
+      // Use capture: true so we intercept key events before Gemini/Quill can swallow them
+      window.addEventListener('keydown', onKey, true);
     }
 
     const observer = new MutationObserver(() => {

@@ -53,7 +53,8 @@ describe('E2E: Workspace Bridge & Slash Command Interception in Gemini DOM', () 
             if (data.error) {
               reject(new Error(data.error.message || JSON.stringify(data.error)));
             } else if (data.result?.exceptionDetails) {
-              reject(new Error(data.result.exceptionDetails.text || 'Script threw an exception'));
+              const exDesc = data.result.exceptionDetails.exception?.description || data.result.exceptionDetails.text;
+              reject(new Error(`In-page exception: ${exDesc}`));
             } else {
               resolve(data.result?.result?.value);
             }
@@ -772,5 +773,190 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(verifyResult, 'Must populate real editor and click submit button');
     assert.equal(verifyResult.clipEmpty, true, '.ql-clipboard must remain untouched');
     assert.equal(verifyResult.submitted, true, 'Send button must be clicked');
+  });
+
+  it('15. Captures "y" keyboard shortcut to approve tool call even when composer is actively focused', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'key-approve-sample.txt'), 'keyboard_approve_success_payload');
+
+    // Simulate composer actively focused by user, then Gemini emits [read] tag
+    await evaluateInPage(`
+      (() => {
+        const ed = document.querySelector('rich-textarea [contenteditable="true"]');
+        if (ed) ed.focus();
+
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[read]key-approve-sample.txt[/read]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('key-approve-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear');
+
+    // User presses 'y' key in terminal / browser (dispatched to window/document while composer had focus)
+    await evaluateInPage(`
+      (() => {
+        const target = document.activeElement || window;
+        const ev = new KeyboardEvent('keydown', {
+          key: 'y',
+          code: 'KeyY',
+          bubbles: true,
+          cancelable: true
+        });
+        target.dispatchEvent(ev);
+      })()
+    `);
+
+    // Verify modal dismissed and tool result contains read file content
+    const editorResult = await pollUntil(async () => {
+      const state = await evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          const ed = document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)') || document.querySelector('[contenteditable="true"]');
+          return {
+            hasCard: Boolean(card),
+            text: ed ? ed.textContent.trim() : ''
+          };
+        })()
+      `);
+      if (!state.hasCard && state.text && state.text.includes('keyboard_approve_success_payload')) {
+        return state.text;
+      }
+      return null;
+    }, 5000);
+
+    assert.ok(editorResult, 'Modal must close and file content must be submitted via "y" key');
+    assert.match(editorResult, /keyboard_approve_success_payload/);
+  });
+
+  it('16. Captures "n" keyboard shortcut to reject tool call even when composer is actively focused', async () => {
+    // Simulate composer actively focused by user, then Gemini emits [read] tag
+    await evaluateInPage(`
+      (() => {
+        const ed = document.querySelector('rich-textarea [contenteditable="true"]');
+        if (ed) ed.focus();
+
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[read]key-reject-sample.txt[/read]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('key-reject-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear');
+
+    // User presses 'n' key in terminal / browser
+    await evaluateInPage(`
+      (() => {
+        const target = document.activeElement || window;
+        const ev = new KeyboardEvent('keydown', {
+          key: 'n',
+          code: 'KeyN',
+          bubbles: true,
+          cancelable: true
+        });
+        target.dispatchEvent(ev);
+      })()
+    `);
+
+    // Verify modal dismissed and rejected notification appears in editor without executing file read
+    const editorResult = await pollUntil(async () => {
+      const state = await evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          const ed = document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)') || document.querySelector('[contenteditable="true"]');
+          return {
+            hasCard: Boolean(card),
+            text: ed ? ed.textContent.trim() : ''
+          };
+        })()
+      `);
+      if (!state.hasCard && state.text && state.text.includes('User rejected this tool call')) {
+        return state.text;
+      }
+      return null;
+    }, 5000);
+
+    assert.ok(editorResult, 'Modal must close and rejection text must be populated via "n" key');
+    assert.match(editorResult, /User rejected this tool call/);
+  });
+
+  it('17. Approves tool call via pointerdown event on Approve button', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'pointer-approve-sample.txt'), 'pointer_event_success_data');
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[read]pointer-approve-sample.txt[/read]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('pointer-approve-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear');
+
+    // Trigger pointerdown (such as from terminal cursor or touch input)
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) {
+          const ev = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
+          btn.dispatchEvent(ev);
+        }
+      })()
+    `);
+
+    const editorResult = await pollUntil(async () => {
+      const state = await evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          const ed = document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)') || document.querySelector('[contenteditable="true"]');
+          return {
+            hasCard: Boolean(card),
+            text: ed ? ed.textContent.trim() : ''
+          };
+        })()
+      `);
+      if (!state.hasCard && state.text && state.text.includes('pointer_event_success_data')) {
+        return state.text;
+      }
+      return null;
+    }, 5000);
+
+    assert.ok(editorResult, 'Modal must close and file content must be submitted via pointerdown');
+    assert.match(editorResult, /pointer_event_success_data/);
   });
 });
