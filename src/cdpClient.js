@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyFileChangesToDisk, executeShellCommand, readFileFromDisk } from './workspace.js';
-import { createCliWorkspaceZip } from './workspaceZip.js';
+import {
+  applyFileChangesToDisk,
+  executeShellCommand,
+  readFileFromDisk,
+  formatWorkspaceTree,
+  scanWorkspaceFiles
+} from './workspace.js';
 
 /**
  * Minimal Chrome DevTools Protocol (CDP) client using native Node.js WebSockets.
@@ -255,10 +260,15 @@ export function startAutoInjector({
 
                     try {
                       if (action === 'get_workspace') {
+                        const files = scanWorkspaceFiles(cwd, 300);
+                        const fileTree = formatWorkspaceTree(cwd, 200);
                         result = {
                           ok: true,
                           cwd,
-                          name: path.basename(cwd)
+                          name: path.basename(cwd),
+                          files,
+                          fileTree,
+                          totalFiles: files.length
                         };
                       } else if (action === 'help') {
                         console.log('  ⚡ Command:   /help');
@@ -280,12 +290,6 @@ export function startAutoInjector({
                         console.log(`  ⚡ Command:   read ${filePath}`);
                         const readRes = readFileFromDisk(filePath, cwd);
                         result = { ok: true, ...readRes };
-                      } else if (action === 'upload_zip') {
-                        console.log('  ⚡ Command:   /zip');
-                        const zipInfo = await createCliWorkspaceZip(cwd);
-                        const cdp = new ChromeDevToolsClient(cdpPort);
-                        const uploadRes = await cdp.injectFiles([zipInfo.zipPath]);
-                        result = { ok: true, ...uploadRes, zipPath: zipInfo.zipPath };
                       }
                     } catch (err) {
                       result = { ok: false, error: err.message };

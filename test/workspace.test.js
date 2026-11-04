@@ -9,7 +9,8 @@ import {
   applyFileChangesToDisk,
   executeShellCommand,
   scanWorkspaceFiles,
-  readFileFromDisk
+  readFileFromDisk,
+  formatWorkspaceTree
 } from '../src/workspace.js';
 
 test('isPathInsideRootDir - security boundary enforcement', () => {
@@ -122,6 +123,21 @@ test('readFileFromDisk - securely reads files and enforces boundaries', () => {
     assert.throws(() => readFileFromDisk('../secret.txt', root), /outside workspace root/);
     // Non-existent
     assert.throws(() => readFileFromDisk('missing.txt', root), /File not found/);
+  } finally {
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('formatWorkspaceTree - formats clean file list for prompt injection', () => {
+  const root = path.join(os.tmpdir(), `gtw-tree-test-${Date.now()}`);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/index.js'), '// code');
+  fs.writeFileSync(path.join(root, 'package.json'), '{}');
+
+  try {
+    const tree = formatWorkspaceTree(root);
+    assert.ok(tree.includes('- src/index.js'));
+    assert.ok(tree.includes('- package.json'));
   } finally {
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
   }

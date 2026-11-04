@@ -23,7 +23,14 @@ Automating the Gemini Web UI via programmatic, unprompted loops violates Google'
 
 ## Agent Mode Design
 
-### 1. Tool Call Markup Formats
+### 1. Workspace File Tree Auto-Injection
+When `/agent [prompt]` is invoked:
+- The local bridge scans the current workspace file tree (`formatWorkspaceTree()`), excluding heavy directories like `.git`, `node_modules`, `dist`, and `vendor`.
+- The formatted file tree is automatically injected into the initial system instructions.
+- This gives Gemini complete visibility over the repository layout without brittle DOM-based file/zip uploads (`/zip` is fully deprecated).
+- Gemini uses `%<read>%file/path%</read>%` to inspect files on-demand.
+
+### 2. Tool Call Markup Formats
 Gemini is instructed via prompt to use explicit markup tags when requesting local actions:
 - **Command Execution**: `%<tool_call>%command%</tool_call>%`
 - **File Read**: `%<read>%file/path%</read>%`

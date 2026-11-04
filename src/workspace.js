@@ -210,6 +210,20 @@ export function scanWorkspaceFiles(rootDir = process.cwd(), maxFiles = 500) {
 }
 
 /**
+ * Formats a clean workspace file list for prompt context injection.
+ */
+export function formatWorkspaceTree(rootDir = process.cwd(), maxFiles = 200) {
+  const files = scanWorkspaceFiles(rootDir, maxFiles + 1);
+  const truncated = files.length > maxFiles;
+  const list = truncated ? files.slice(0, maxFiles) : files;
+  let text = list.map((f) => `- ${f}`).join('\n');
+  if (truncated) {
+    text += `\n... (${files.length} files total, truncated to first ${maxFiles})`;
+  }
+  return text || '(empty workspace)';
+}
+
+/**
  * Reads a workspace file securely within the root directory.
  */
 export function readFileFromDisk(filePath, rootDir = process.cwd(), maxBytes = 2 * 1024 * 1024) {

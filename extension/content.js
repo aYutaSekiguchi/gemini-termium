@@ -72,8 +72,7 @@
         get_workspace: { path: '/v1/workspace', method: 'GET' },
         run: { path: '/v1/actions/run', method: 'POST', body: payload },
         read: { path: '/v1/actions/read', method: 'POST', body: payload },
-        apply: { path: '/v1/actions/apply', method: 'POST', body: payload },
-        upload_zip: { path: '/v1/cdp/upload', method: 'POST', body: payload }
+        apply: { path: '/v1/actions/apply', method: 'POST', body: payload }
       };
 
       const ep = endpoints[action];
@@ -108,10 +107,9 @@
   }
 
   const SLASH_COMMANDS = [
-    { command: '/agent', label: '🤖 /agent [prompt]', desc: 'Start autonomous agent task with Human-in-the-Loop approval' },
+    { command: '/agent', label: '🤖 /agent [prompt]', desc: 'Start autonomous agent with workspace file tree & tools' },
     { command: '/apply', label: '📁 /apply', desc: 'Apply code diffs to local workspace' },
     { command: '/run', label: '⚡ /run [cmd]', desc: 'Execute shell command on local workspace' },
-    { command: '/zip', label: '📦 /zip', desc: 'Package and attach workspace zip' },
     { command: '/status', label: 'ℹ️ /status', desc: 'Show workspace connection details' },
     { command: '/help', label: '❓ /help', desc: 'Show slash command list and usage' }
   ];
@@ -845,16 +843,6 @@
       showToast(data.ok ? `✔ Command finished (code 0)` : `✖ Command failed (code ${data.code})`, data.ok ? 'success' : 'error');
     }
 
-    async function handleUploadZip() {
-      showToast('📦 Packaging workspace zip and attaching...', 'info');
-      const data = await callBridge('upload_zip', { useZip: true });
-      if (data && data.ok) {
-        showToast('✔ Workspace zip attached successfully!', 'success');
-      } else {
-        showToast(`Upload failed: ${data?.error || 'Unknown error'}`, 'error');
-      }
-    }
-
     // 9. Intercept Slash Commands
     function handleSendIntercept(e) {
       const editor = findPromptEditor(e);
@@ -867,7 +855,7 @@
       const command = parts[0].toLowerCase();
       const arg = parts.slice(1).join(' ').trim();
 
-      if (['/apply', '/run', '/zip', '/status', '/help', '/agent'].includes(command)) {
+      if (['/apply', '/run', '/status', '/help', '/agent'].includes(command)) {
         if (e && typeof e.preventDefault === 'function') {
           e.preventDefault();
           e.stopPropagation();
@@ -883,8 +871,6 @@
           handleApplyFiles();
         } else if (command === '/run') {
           handleRunCommand(arg || null);
-        } else if (command === '/zip') {
-          handleUploadZip();
         } else if (command === '/status') {
           callBridge('status').then((res) => {
             const name = res?.name || workspaceInfo?.name || 'unknown';
@@ -893,42 +879,49 @@
           });
         } else if (command === '/help') {
           callBridge('help');
-          showToast('Commands: /agent [prompt] (autonomous agent) | /apply (apply code) | /run [cmd] (execute shell) | /zip | /status', 'info', 7000);
+          showToast('Commands: /agent [prompt] (autonomous agent) | /apply (apply code) | /run [cmd] (execute shell) | /status', 'info', 7000);
         }
         return true;
       }
       return false;
     }
 
-    function handleAgentCommand(arg, editor) {
+    async function handleAgentCommand(arg, editor) {
+      showToast('🔍 Scanning workspace file tree...', 'info', 2000);
+      const wsData = await callBridge('get_workspace');
+      const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
+      const wsTree = wsData?.fileTree || '(empty workspace)';
+
       const promptInstruction = `あなたは自律型コーディングエージェントとして動作してください。
-具体的には以下のルールとマークアップ形式のツール呼び出しに厳格に従うこと：
+現在のワークスペース構造は以下の通りです：
 
-1. コマンド実行:
-%<tool_call>%実行コマンド%</tool_call>%
-とだけ出力し、ユーザーからの実行結果を待つこと。
+【ワークスペース構造】
+作業ディレクトリ: ${wsName}
+ファイル一覧:
+${wsTree}
 
-2. ファイル読み込み:
-%<read>%ファイルパス%</read>%
-とだけ出力し、ファイル内容の返信を待つこと。
-
-3. ファイル書き込み:
-%<write path="ファイルパス">%ファイル内容%</write>%
-とだけ出力し、書き込み完了通知を待つこと。
+【エージェントの動作ルール】
+1. ファイル読み込み:
+   必要なコードや設定を確認したい場合、%<read>%ファイルパス%</read>% とだけ出力し、ユーザーからのファイル内容の返信を待つこと。
+2. ファイル書き込み:
+   コードの新規作成や更新・差分適用を行う場合、%<write path="ファイルパス">%コード内容%</write>% とだけ出力し、書き込み完了通知を待つこと。
+3. コマンド実行:
+   テスト実行やビルド、git操作などが必要な場合、%<tool_call>%実行コマンド%</tool_call>% とだけ出力し、ユーザーからの実行結果を待つこと。
 
 【重要】
+- 上記のファイル一覧を参照し、必要なファイルがある場合は %<read>%ファイルパス%</read>% で内容を読み取ってから推論・作業を進めること。
 - 各ツール呼び出しを出力した後は、必ずユーザーからの結果返信が来るまで追加の推論や追加の出力を停止（待機）すること。
 - 1回のターンで実行するツール呼び出しは原則1つだけにすること。`;
 
       if (arg) {
         const fullPrompt = `${promptInstruction}\n\n【ユーザーからの指示】\n${arg}`;
         setPromptText(editor, fullPrompt);
-        showToast('🤖 Agent prompt prepared. Starting...', 'info', 3000);
+        showToast('🤖 Agent prompt prepared with file tree. Starting...', 'info', 3000);
         setTimeout(() => submitCurrentPrompt(), 300);
       } else {
         const template = `${promptInstruction}\n\n【ユーザーからの指示】\n`;
         setPromptText(editor, template);
-        showToast('🤖 Agent template inserted. Add your prompt and press Enter.', 'info', 6000);
+        showToast('🤖 Agent template with file tree inserted. Add your prompt and press Enter.', 'info', 6000);
       }
     }
 

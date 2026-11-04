@@ -243,7 +243,7 @@ console.log("hello from e2e test");</code></pre>
 
     assert.match(toastMessage, /\/apply/);
     assert.match(toastMessage, /\/run/);
-    assert.match(toastMessage, /\/zip/);
+    assert.match(toastMessage, /\/agent/);
 
     // Verify prompt input was cleared back to an empty paragraph
     const editorText = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
@@ -421,5 +421,39 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
     assert.match(editorResult, /%<tool_result>%/);
     assert.match(editorResult, /Successfully applied 1 file change/);
+  });
+
+  it('8. Intercepts /agent command and auto-injects workspace file tree into prompt', async () => {
+    // Write sample file into workspace so it appears in the tree
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'tree_sample.js'), 'console.log(123);');
+
+    await evaluateInPage(`
+      (() => {
+        const ed = document.querySelector('[contenteditable="true"]');
+        while (ed.firstChild) ed.removeChild(ed.firstChild);
+        const p = document.createElement('p');
+        p.textContent = '/agent fix tree_sample.js bug';
+        ed.appendChild(p);
+
+        const ev = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          bubbles: true,
+          cancelable: true
+        });
+        p.dispatchEvent(ev);
+      })()
+    `);
+
+    // Verify prompt was populated with agent instructions, workspace file tree, and task
+    const editorContent = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
+      return text && text.includes('【ワークスペース構造】') ? text : null;
+    }, 5000);
+
+    assert.ok(editorContent.includes('tree_sample.js'), 'Prompt must contain workspace file tree');
+    assert.ok(editorContent.includes('%<read>%'), 'Prompt must contain %<read>% instruction');
+    assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });
 });

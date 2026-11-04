@@ -6,9 +6,9 @@ import {
   applyFileChangesToDisk,
   executeShellCommand,
   scanWorkspaceFiles,
-  readFileFromDisk
+  readFileFromDisk,
+  formatWorkspaceTree
 } from './workspace.js';
-import { createCliWorkspaceZip, formatBytes } from './workspaceZip.js';
 import { ChromeDevToolsClient } from './cdpClient.js';
 
 export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {}) {
@@ -40,15 +40,17 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {})
         return sendJson(200, { ok: true, cwd, pid: process.pid });
       }
 
-      // 2. Workspace info
+      // 2. Workspace info & file tree
       if (req.method === 'GET' && pathname === '/v1/workspace') {
-        const files = scanWorkspaceFiles(cwd, 100);
+        const files = scanWorkspaceFiles(cwd, 300);
+        const fileTree = formatWorkspaceTree(cwd, 200);
         return sendJson(200, {
           ok: true,
           cwd,
           name: path.basename(cwd),
-          sampleFiles: files.slice(0, 10),
-          totalSampled: files.length
+          files,
+          fileTree,
+          totalFiles: files.length
         });
       }
 
@@ -79,18 +81,6 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {})
             return sendJson(400, { ok: false, error: 'Malformed JSON payload' });
           }
         }
-      }
-
-      // 4. Create Workspace Zip
-      if (req.method === 'POST' && pathname === '/v1/workspace/zip') {
-        const zipInfo = await createCliWorkspaceZip(cwd);
-        return sendJson(200, {
-          ok: true,
-          zipPath: zipInfo.zipPath,
-          zipName: zipInfo.zipName,
-          zipSize: zipInfo.zipSize,
-          formattedSize: formatBytes(zipInfo.zipSize)
-        });
       }
 
       // 5. Apply file changes/diffs to workspace
@@ -131,20 +121,6 @@ export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222 } = {})
         const timeoutMs = typeof body.timeoutMs === 'number' ? body.timeoutMs : 60000;
         const result = await executeShellCommand(command, cwd, timeoutMs);
         return sendJson(result.ok ? 200 : 500, result);
-      }
-
-      // 7. CDP Automated File Upload
-      if (req.method === 'POST' && pathname === '/v1/cdp/upload') {
-        let files = body.files;
-        if (!files && body.useZip) {
-          const zipInfo = await createCliWorkspaceZip(cwd);
-          files = [zipInfo.zipPath];
-        }
-        if (!Array.isArray(files) || files.length === 0) {
-          return sendJson(400, { ok: false, error: 'No files specified to upload' });
-        }
-        const resUpload = await cdpClient.injectFiles(files);
-        return sendJson(200, resUpload);
       }
 
       sendJson(404, { ok: false, error: `Endpoint not found: ${pathname}` });

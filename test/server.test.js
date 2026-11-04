@@ -21,12 +21,14 @@ test('createBridgeServer - HTTP API endpoints integration', async () => {
     assert.equal(healthData.ok, true);
     assert.equal(healthData.cwd, root);
 
-    // 2. Workspace info
+    // 2. Workspace info & file tree
     const wsRes = await fetch(`http://127.0.0.1:${port}/v1/workspace`);
     assert.equal(wsRes.status, 200);
     const wsData = await wsRes.json();
     assert.equal(wsData.ok, true);
     assert.equal(wsData.name, path.basename(root));
+    assert.ok(wsData.fileTree.includes('- src/hello.js'));
+    assert.ok(wsData.files.includes('src/hello.js'));
 
     // 3. Workspace file suggestion
     const filesRes = await fetch(`http://127.0.0.1:${port}/v1/workspace/files?q=hello`);
@@ -72,16 +74,6 @@ test('createBridgeServer - HTTP API endpoints integration', async () => {
     const readData = await readRes.json();
     assert.equal(readData.ok, true);
     assert.equal(readData.content, 'export const hello = "world";');
-
-    // 7. Action: Package workspace zip
-    const zipRes = await fetch(`http://127.0.0.1:${port}/v1/workspace/zip`, {
-      method: 'POST'
-    });
-    assert.equal(zipRes.status, 200);
-    const zipData = await zipRes.json();
-    assert.equal(zipData.ok, true);
-    assert.ok(zipData.zipPath && fs.existsSync(zipData.zipPath));
-    try { fs.unlinkSync(zipData.zipPath); } catch {}
   } finally {
     await bridge.close();
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}

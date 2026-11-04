@@ -49,9 +49,9 @@ Features:
   - In-Process Zero-Overhead Backend: Single Node.js daemon hosts gRPC & Local Bridge
   - Local Workspace Isolation: Binds to the current directory ($PWD)
   - Native Slash Commands:
+      /agent [prompt]      Start autonomous agent with workspace file tree & tools
       /apply               Apply code diffs from latest response to local files
       /run [cmd]           Run extracted shell commands on local machine
-      /zip                 Package local workspace and attach to prompt
       /status              Show workspace connection details
     `);
     process.exit(0);

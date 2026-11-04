@@ -86,9 +86,9 @@ A desktop window will open. Sign into your Google account once, then close the w
 
 | Command | Action |
 | :--- | :--- |
+| `/agent <task>` | Starts an autonomous coding session. Auto-injects workspace file tree and manages `%<read>%`, `%<write>%`, `%<tool_call>%` with Human-in-the-Loop approval. |
 | `/apply` | Extracts code blocks and unified diffs from Gemini's latest response and applies them to your local project files. |
 | `/run <cmd>` | Executes a shell command in your workspace directory and displays stdout in a slide-out drawer. |
-| `/zip` | Packages the workspace (respecting `.gitignore`) and stages it for Gemini prompt upload. |
 | `/status` | Shows the current workspace path, connection status, and port info. |
 | `/help` | Displays available slash commands and usage tips. |
 
