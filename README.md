@@ -57,16 +57,16 @@ Automating the Gemini web UI without a human in the loop may violate Google's Te
 flowchart TD
     User["Terminal (Ghostty / WezTerm / iTerm2 / Kitty)"]
     Client["Termium Go Client (termium -s 127.0.0.1:50051)"]
-    Backend["Node.js Backend (single process)\n- Termium gRPC Server (proto/bc.proto)\n- Local Workspace Bridge: HTTP API for file read/write and command execution\n- Script injector via Chrome DevTools Protocol (CDP)"]
-    Chrome["Google Chrome (--headless=new)\n- Per-project profile (login cookies copied from the master profile)"]
-    DOM["Gemini WebUI (gemini.google.com)\n- Human-in-the-Loop approval card\n- Slash command popup menu\n- Code block action buttons"]
+    Backend["Node.js Backend (single process)<br>- Termium gRPC Server (proto/bc.proto)<br>- Local Workspace Bridge: HTTP API for file read/write and command execution<br>- Script injector via Chrome DevTools Protocol (CDP)"]
+    Chrome["Google Chrome (--headless=new)<br>- Per-project profile (login cookies copied from the master profile)"]
+    DOM["Gemini WebUI (gemini.google.com)<br>- Human-in-the-Loop approval card<br>- Slash command popup menu<br>- Code block action buttons"]
     Workspace["Local Workspace ($PWD)"]
 
-    User <-->|Kitty Graphics / Sixel / Half-block| Client
-    Client <-->|gRPC (CaptureScreenshot / SendInput)| Backend
-    Backend <-->|Puppeteer & CDP| Chrome
-    Chrome <-->|DOM Manipulation| DOM
-    Backend <-->|File I/O & Shell execution| Workspace
+    User <-->|"Kitty Graphics / Sixel / Half-block"| Client
+    Client <-->|"gRPC: CaptureScreenshot / SendInput"| Backend
+    Backend <-->|"Puppeteer & CDP"| Chrome
+    Chrome <-->|"DOM Manipulation"| DOM
+    Backend <-->|"File I/O & Shell execution"| Workspace
 ```
 
 ---

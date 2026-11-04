@@ -57,16 +57,16 @@ Gemini の回答にこれらのタグが含まれると承認カードが表示�
 flowchart TD
     User["ターミナル (Ghostty / WezTerm / iTerm2 / Kitty)"]
     Client["Termium Go クライアント (termium -s 127.0.0.1:50051)"]
-    Backend["Node.js バックエンド（単一プロセス）\n- Termium gRPC サーバー (proto/bc.proto)\n- ローカルワークスペース Bridge: ファイル読み書き・コマンド実行用 HTTP API\n- Chrome DevTools Protocol (CDP) によるスクリプト注入"]
-    Chrome["Google Chrome (--headless=new)\n- プロジェクトごとのプロファイル（ログイン Cookie はマスタープロファイルからコピー）"]
-    DOM["Gemini WebUI (gemini.google.com)\n- Human-in-the-Loop 承認カード\n- スラッシュコマンド ポップアップ\n- コードブロック アクションボタン"]
+    Backend["Node.js バックエンド（単一プロセス）<br>- Termium gRPC サーバー (proto/bc.proto)<br>- ローカルワークスペース Bridge: ファイル読み書き・コマンド実行用 HTTP API<br>- Chrome DevTools Protocol (CDP) によるスクリプト注入"]
+    Chrome["Google Chrome (--headless=new)<br>- プロジェクトごとのプロファイル（ログイン Cookie はマスタープロファイルからコピー）"]
+    DOM["Gemini WebUI (gemini.google.com)<br>- Human-in-the-Loop 承認カード<br>- スラッシュコマンド ポップアップ<br>- コードブロック アクションボタン"]
     Workspace["ローカルワークスペース ($PWD)"]
 
-    User <-->|Kitty Graphics / Sixel / Half-block| Client
-    Client <-->|gRPC (CaptureScreenshot / SendInput)| Backend
-    Backend <-->|Puppeteer & CDP| Chrome
-    Chrome <-->|DOM 操作| DOM
-    Backend <-->|ファイル I/O & コマンド実行| Workspace
+    User <-->|"Kitty Graphics / Sixel / Half-block"| Client
+    Client <-->|"gRPC: CaptureScreenshot / SendInput"| Backend
+    Backend <-->|"Puppeteer & CDP"| Chrome
+    Chrome <-->|"DOM 操作"| DOM
+    Backend <-->|"ファイル I/O & コマンド実行"| Workspace
 ```
 
 ---
