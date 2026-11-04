@@ -1105,6 +1105,7 @@ ${wsTree}
 
     // 11. Autonomous Agent Engine with Human-in-the-Loop Confirmation
     let activeAgentModal = null;
+    let activeModalResponse = null;
     const processedToolCallIds = new Set();
 
     function sanitizeTagValue(val) {
@@ -1130,161 +1131,153 @@ ${wsTree}
       return false;
     }
 
-    function parseToolCallsFromText(rawText) {
+    function isResponseComplete(responseEl) {
+      if (!responseEl) return true;
+
+      // 1. Explicit data-complete attribute (used in testing or explicit state markers)
+      if (responseEl.getAttribute('data-complete') === 'false') return false;
+      if (responseEl.getAttribute('data-complete') === 'true') return true;
+
+      // 2. aria-busy attribute: while streaming, Gemini sets aria-busy="true" on markdown/message-content
+      if (responseEl.getAttribute('aria-busy') === 'true') return false;
+      const busyChild = responseEl.querySelector('[aria-busy="true"]');
+      if (busyChild) return false;
+
+      // 3. Stop generation button: while streaming, the stop button is visible and active
+      const stopBtn = document.querySelector(
+        'button[aria-label*="Stop"], button[aria-label*="停止"], [data-test-id="stop-button"], button.stop-button'
+      );
+      if (stopBtn && stopBtn.offsetParent !== null && !stopBtn.disabled) {
+        return false;
+      }
+
+      return true;
+    }
+
+    function parseToolCallsFromText(rawText, options = {}) {
       if (!rawText) return null;
+      const isComplete = options.isComplete !== false;
 
-      // 1. Bracket Format: [read]path[/read] or [read: path]
-      const bracketReadMatch = rawText.match(/\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/i) ||
-                               rawText.match(/\[read:\s*([^\]]+)\]/i);
-      if (bracketReadMatch) {
-        const filePath = sanitizeTagValue(bracketReadMatch[1]);
+      const candidates = [];
+
+      function addCandidate(type, title, payload, match, rawTag) {
+        candidates.push({
+          type,
+          title,
+          ...payload,
+          rawTag: rawTag || match[0],
+          startIndex: match.index,
+          endIndex: match.index + (rawTag || match[0]).length
+        });
+      }
+
+      // 1. Bracket Write: [write path="..."]content[/write]
+      const bracketWriteRegex = /\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/gi;
+      let m;
+      while ((m = bracketWriteRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        const content = (m[2] || '').trim();
         if (filePath) {
-          return {
-            type: 'read',
-            title: 'Read Workspace File',
-            filePath,
-            rawTag: bracketReadMatch[0]
-          };
+          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
         }
       }
 
-      // 2. Bracket Write: [write path="..."]content[/write]
-      const bracketWriteMatch = rawText.match(/\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/i);
-      if (bracketWriteMatch) {
-        const filePath = sanitizeTagValue(bracketWriteMatch[1]);
-        const content = (bracketWriteMatch[2] || '').trim();
-        if (filePath) {
-          return {
-            type: 'write',
-            title: 'Write Workspace File',
-            filePath,
-            content,
-            rawTag: bracketWriteMatch[0]
-          };
-        }
-      }
-
-      // 3. Bracket Exec: [exec]cmd[/exec] or [tool_call]cmd[/tool_call]
-      const bracketExecMatch = rawText.match(/\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/i) ||
-                               rawText.match(/\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/i);
-      if (bracketExecMatch) {
-        const rawCmd = sanitizeTagValue(bracketExecMatch[1]);
-        if (rawCmd) {
-          if (looksLikeFilePath(rawCmd)) {
-            return {
-              type: 'read',
-              title: 'Read Workspace File',
-              filePath: rawCmd,
-              rawTag: bracketExecMatch[0]
-            };
-          }
-          return {
-            type: 'tool_call',
-            title: 'Execute Shell Command',
-            command: rawCmd,
-            rawTag: bracketExecMatch[0]
-          };
-        }
-      }
-
-      // 4. Code Block Format: ```read\npath\n``` or ```exec\ncmd\n``` or ```write path="..."\ncontent\n```
-      const codeBlockMatch = rawText.match(/```(?:(read|exec|command|bash)|(?:write\s+path=["']?([^"'\n`]+)["']?))\s*\n([\s\S]*?)```/i);
-      if (codeBlockMatch) {
-        const actionType = (codeBlockMatch[1] || 'write').toLowerCase();
-        const writePath = codeBlockMatch[2];
-        const payload = (codeBlockMatch[3] || '').trim();
-
-        if (actionType === 'read') {
-          const filePath = sanitizeTagValue(payload);
-          if (filePath) {
-            return {
-              type: 'read',
-              title: 'Read Workspace File',
-              filePath,
-              rawTag: codeBlockMatch[0]
-            };
-          }
-        } else if (writePath) {
-          return {
-            type: 'write',
-            title: 'Write Workspace File',
-            filePath: sanitizeTagValue(writePath),
-            content: payload,
-            rawTag: codeBlockMatch[0]
-          };
-        } else {
-          const cmd = sanitizeTagValue(payload);
-          if (cmd) {
-            if (looksLikeFilePath(cmd)) {
-              return {
-                type: 'read',
-                title: 'Read Workspace File',
-                filePath: cmd,
-                rawTag: codeBlockMatch[0]
-              };
-            }
-            return {
-              type: 'tool_call',
-              title: 'Execute Shell Command',
-              command: cmd,
-              rawTag: codeBlockMatch[0]
-            };
-          }
-        }
-      }
-
-      // 5. XML / Percent Delimiter Format: <read> or %<read>%
-      const readMatch = rawText.match(/(?:%<|<)read\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)read\s*(?:>%|>|%)/i);
-      if (readMatch) {
-        const filePath = sanitizeTagValue(readMatch[1]);
-        if (filePath) {
-          return {
-            type: 'read',
-            title: 'Read Workspace File',
-            filePath,
-            rawTag: readMatch[0]
-          };
-        }
-      }
-
-      const writeMatch = rawText.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)write\s*(?:>%|>|%)/i);
-      if (writeMatch) {
-        const filePath = sanitizeTagValue(writeMatch[1]);
-        let content = writeMatch[2] || '';
+      // 2. XML / Percent Write: %<write path="...">content%</write>% or <write path="...">content</write>
+      const xmlWriteRegex = /(?:%<|<)write\s+path=["']?([^"'>]+)["']?\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)write\s*(?:>%|>|%)/gi;
+      while ((m = xmlWriteRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        let content = m[2] || '';
         content = content.replace(/^%*\r?\n?/, '').replace(/\r?\n?%*$/, '');
         if (filePath) {
-          return {
-            type: 'write',
-            title: 'Write Workspace File',
-            filePath,
-            content,
-            rawTag: writeMatch[0]
-          };
+          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
         }
       }
 
-      const cmdMatch = rawText.match(/(?:%<|<)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)/i);
-      if (cmdMatch) {
-        const rawCmd = sanitizeTagValue(cmdMatch[1]);
+      // 3. Bracket Read: [read]path[/read] or [read: path]
+      const bracketReadRegex = /\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/gi;
+      while ((m = bracketReadRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        if (filePath) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+      const bracketReadColonRegex = /\[read:\s*([^\]]+)\]/gi;
+      while ((m = bracketReadColonRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        if (filePath) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+
+      // 4. XML / Percent Read: %<read>%path%</read>% or <read>path</read>
+      const xmlReadRegex = /(?:%<|<)read\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)read\s*(?:>%|>|%)/gi;
+      while ((m = xmlReadRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        if (filePath) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+
+      // 5. Bracket Exec: [exec]cmd[/exec] or [tool_call]cmd[/tool_call]
+      const bracketExecRegex = /\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/gi;
+      while ((m = bracketExecRegex.exec(rawText)) !== null) {
+        const rawCmd = sanitizeTagValue(m[1]);
         if (rawCmd) {
           if (looksLikeFilePath(rawCmd)) {
-            return {
-              type: 'read',
-              title: 'Read Workspace File',
-              filePath: rawCmd,
-              rawTag: cmdMatch[0]
-            };
+            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
           }
-          return {
-            type: 'tool_call',
-            title: 'Execute Shell Command',
-            command: rawCmd,
-            rawTag: cmdMatch[0]
-          };
+        }
+      }
+      const bracketExecColonRegex = /\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/gi;
+      while ((m = bracketExecColonRegex.exec(rawText)) !== null) {
+        const rawCmd = sanitizeTagValue(m[1]);
+        if (rawCmd) {
+          if (looksLikeFilePath(rawCmd)) {
+            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
+          }
         }
       }
 
-      // 6. Delimiter-bleed or stripped fallback: %%filename.ext%% (Turn 1 bug)
+      // 6. XML / Percent Exec: %<exec>cmd%</exec>% or <exec>cmd</exec>
+      const xmlExecRegex = /(?:%<|<)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)/gi;
+      while ((m = xmlExecRegex.exec(rawText)) !== null) {
+        const rawCmd = sanitizeTagValue(m[1]);
+        if (rawCmd) {
+          if (looksLikeFilePath(rawCmd)) {
+            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
+          }
+        }
+      }
+
+      // Filter out candidates that are completely enclosed within another candidate!
+      // This guarantees an outer [write] or %<write>% is NEVER hijacked by inner tags in its body.
+      const topLevelCandidates = candidates.filter((cand) => {
+        return !candidates.some((other) => {
+          if (cand === other) return false;
+          return other.startIndex <= cand.startIndex && other.endIndex >= cand.endIndex;
+        });
+      });
+
+      if (topLevelCandidates.length > 0) {
+        topLevelCandidates.sort((a, b) => a.startIndex - b.startIndex);
+        const chosen = topLevelCandidates[0];
+        return {
+          type: chosen.type,
+          title: chosen.title,
+          filePath: chosen.filePath,
+          content: chosen.content,
+          command: chosen.command,
+          rawTag: chosen.rawTag
+        };
+      }
+
+      // 7. Delimiter-bleed or stripped fallback: %%filename.ext%% (Turn 1 bug)
       const percentFileMatch = rawText.match(/%%([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)%%/);
       if (percentFileMatch) {
         const filePath = sanitizeTagValue(percentFileMatch[1]);
@@ -1298,20 +1291,110 @@ ${wsTree}
         }
       }
 
-      // 7. Sanitized Bare Response fallback: When Google SafeHtml completely strips <read>
-      // e.g. "package.json" or "README.md" as the sole response
-      const cleanLines = rawText
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l && !l.startsWith('Gemini の回答') && !l.startsWith('Gemini') && !l.startsWith('Model'));
-      if (cleanLines.length === 1 && looksLikeFilePath(cleanLines[0])) {
-        const filePath = sanitizeTagValue(cleanLines[0]);
-        return {
-          type: 'read',
-          title: 'Read Workspace File',
-          filePath,
-          rawTag: filePath
-        };
+      // 8. Sanitized Bare Response fallback: ONLY when response generation is COMPLETED!
+      // Guards against partial streaming tokens (e.g. initial chunk "package.json") triggering premature read
+      if (isComplete) {
+        const cleanLines = rawText
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('Gemini の回答') && !l.startsWith('Gemini') && !l.startsWith('Model'));
+        if (cleanLines.length === 1 && looksLikeFilePath(cleanLines[0])) {
+          const filePath = sanitizeTagValue(cleanLines[0]);
+          return {
+            type: 'read',
+            title: 'Read Workspace File',
+            filePath,
+            rawTag: filePath
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function parseToolCallsFromDOM(responseEl) {
+      if (!responseEl) return null;
+
+      // Inspect rendered code blocks: pre, code-block, .code-block
+      const codeBlocks = Array.from(responseEl.querySelectorAll('pre, code-block, .code-block'));
+      for (const block of codeBlocks) {
+        const codeElem = block.querySelector('code') || block;
+        const content = (codeElem.innerText || codeElem.textContent || '').trim();
+        if (!content) continue;
+
+        const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
+        const langMatch = classes.match(/(?:language|lang)-([a-z0-9_+-]+)/i) ||
+                          block.getAttribute('data-language');
+        const lang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
+
+        // 1. Read block: ```read
+        if (lang === 'read') {
+          const filePath = sanitizeTagValue(content);
+          if (filePath) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath,
+              rawTag: block.outerHTML || content
+            };
+          }
+        }
+
+        // 2. Write block: ```write or code block with file path metadata
+        let writePath = block.getAttribute('data-filepath') || block.getAttribute('data-path');
+        if (!writePath && (lang === 'write' || lang.startsWith('write'))) {
+          const pathInLang = lang.match(/write[:=]([^\s]+)/);
+          if (pathInLang) writePath = pathInLang[1];
+        }
+        if (!writePath) {
+          const tagMatch = content.match(/(?:%<|<|\[)write\s+path=["']?([^"'\]>]+)["']?/i);
+          if (tagMatch) writePath = tagMatch[1];
+        }
+        if (!writePath) {
+          const explicit = content.match(/(?:\/\/|#|\/\*|<!--)\s*(?:filepath|filename|file):\s*([^\s*]+)/i) ||
+                           content.match(/^(?:File:\s*)([^\s\n]+)/im);
+          if (explicit) writePath = explicit[1];
+        }
+        if (writePath) {
+          return {
+            type: 'write',
+            title: 'Write Workspace File',
+            filePath: sanitizeTagValue(writePath),
+            content,
+            rawTag: block.outerHTML || content
+          };
+        }
+
+        // 3. Exec block: ```bash, ```sh, ```exec, ```zsh, ```terminal
+        if (['exec', 'tool_call', 'bash', 'sh', 'shell', 'zsh', 'terminal', 'cmd'].includes(lang)) {
+          // If the block is a generic bash/sh/shell/terminal block, verify it is an intentional tool execution block
+          // (not an explanatory multi-snippet response or normal text with code example)
+          const isToolLang = ['exec', 'tool_call', 'command'].includes(lang);
+          const isExplicitTool = isToolLang ||
+                                 block.hasAttribute('data-tool') ||
+                                 block.classList.contains('agent-tool') ||
+                                 responseEl.hasAttribute('data-agent') ||
+                                 (codeBlocks.length === 1 && !responseEl.querySelector('p:not(.model-response-label-announcer *)'));
+          if (isExplicitTool) {
+            const rawCmd = sanitizeTagValue(content.replace(/^\$\s+/gm, ''));
+            if (rawCmd) {
+              if (looksLikeFilePath(rawCmd)) {
+                return {
+                  type: 'read',
+                  title: 'Read Workspace File',
+                  filePath: rawCmd,
+                  rawTag: block.outerHTML || content
+                };
+              }
+              return {
+                type: 'tool_call',
+                title: 'Execute Shell Command',
+                command: rawCmd,
+                rawTag: block.outerHTML || content
+              };
+            }
+          }
+        }
       }
 
       return null;
@@ -1326,27 +1409,50 @@ ${wsTree}
       if (responses.length === 0) return;
       const latest = responses[responses.length - 1];
 
-      if (activeAgentModal) return;
+      // If active modal is showing for an older response that has been superseded by a new turn, dismiss it
+      if (activeAgentModal) {
+        if (activeModalResponse && activeModalResponse !== latest) {
+          try { activeAgentModal.remove(); } catch {}
+          activeAgentModal = null;
+          activeModalResponse = null;
+        } else if (document.body.contains(activeAgentModal)) {
+          return;
+        } else {
+          activeAgentModal = null;
+          activeModalResponse = null;
+        }
+      }
 
+      const isComplete = isResponseComplete(latest);
       const rawText = latest.innerText || latest.textContent || '';
-      const toolCall = parseToolCallsFromText(rawText);
+
+      // 1. First parse structured text tags with enclosing block priority
+      let toolCall = parseToolCallsFromText(rawText, { isComplete });
+
+      // 2. If no text tags matched, parse rendered DOM code blocks (pre/code-block with language attribute)
+      if (!toolCall) {
+        toolCall = parseToolCallsFromDOM(latest);
+      }
+
       if (!toolCall) return;
 
       const callId = `${toolCall.type}:${toolCall.command || toolCall.filePath}:${toolCall.rawTag.length}`;
       if (processedToolCallIds.has(callId)) return;
 
-      showAgentApprovalModal(toolCall, callId);
+      showAgentApprovalModal(toolCall, callId, latest);
     }
 
-    function showAgentApprovalModal(toolCall, callId) {
+    function showAgentApprovalModal(toolCall, callId, responseEl) {
       if (activeAgentModal) {
         try { activeAgentModal.remove(); } catch {}
         activeAgentModal = null;
+        activeModalResponse = null;
       }
 
       const modal = document.createElement('div');
       modal.className = 'gtw-agent-approval-card';
       activeAgentModal = modal;
+      activeModalResponse = responseEl || null;
 
       // Header
       const header = document.createElement('div');
@@ -1421,7 +1527,10 @@ ${wsTree}
       const cleanup = () => {
         window.removeEventListener('keydown', onKey);
         if (modal.parentNode) modal.parentNode.removeChild(modal);
-        if (activeAgentModal === modal) activeAgentModal = null;
+        if (activeAgentModal === modal) {
+          activeAgentModal = null;
+          activeModalResponse = null;
+        }
       };
 
       const handleApprove = async () => {

@@ -548,4 +548,147 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult.includes('%<tool_result>%'));
     assert.ok(editorResult.includes('termium-agent-test'));
   });
+
+  it('11. Prioritizes outer enclosing write over nested tags in write body', async () => {
+    // Simulate Gemini emitting write block containing nested [read] tag in body
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '%<write path="nested_guide.md">Usage: [read]src/server.js[/read]%</write>%';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify modal appears for WRITE (nested [read] must NOT hijack outer write)
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('nested_guide.md'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must prioritize outer write operation');
+
+    // User approves
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file written to disk with inner tag preserved as body text
+    const targetFile = path.join(tmpWorkspaceDir, 'nested_guide.md');
+    const written = await pollUntil(async () => {
+      return fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : null;
+    }, 5000);
+    assert.equal(written, 'Usage: [read]src/server.js[/read]');
+  });
+
+  it('12. Detects tool call from rendered DOM code block with language attribute', async () => {
+    // Simulate rendered code block from markdown ```bash\necho "dom_bash_success"\n```
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.className = 'language-bash';
+        code.textContent = 'echo "dom_bash_success"';
+        pre.appendChild(code);
+        resp.appendChild(pre);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify modal detects command from DOM code block
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('dom_bash_success'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Modal must detect command from rendered DOM code block');
+
+    // User approves
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify command executed and result submitted
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
+      return text && text.includes('dom_bash_success') ? text : null;
+    }, 5000);
+
+    assert.ok(editorResult.includes('%<tool_result>%'));
+    assert.ok(editorResult.includes('dom_bash_success'));
+  });
+
+  it('13. Guards untagged bare response fallback against premature evaluation during active streaming', async () => {
+    // Step 1: Simulate streaming chunk with aria-busy="true"
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const div = document.createElement('div');
+        div.id = 'streaming-test-content';
+        div.className = 'model-response-text';
+        div.setAttribute('aria-busy', 'true');
+        div.textContent = 'package.json';
+        resp.appendChild(div);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Wait 400ms and verify modal did NOT appear while streaming
+    await new Promise((r) => setTimeout(r, 400));
+    const cardWhileStreaming = await evaluateInPage(`Boolean(document.querySelector('.gtw-agent-approval-card'))`);
+    assert.equal(cardWhileStreaming, false, 'Modal must not trigger on bare token while response is busy/streaming');
+
+    // Step 2: Response updates with explanation and finishes streaming
+    await evaluateInPage(`
+      (() => {
+        const div = document.getElementById('streaming-test-content');
+        if (div) {
+          div.textContent = 'package.json contains dependencies for this repository.';
+          div.setAttribute('aria-busy', 'false');
+        }
+      })()
+    `);
+
+    // Wait 400ms and verify modal did NOT appear (not a tool call)
+    await new Promise((r) => setTimeout(r, 400));
+    const cardOnExplanation = await evaluateInPage(`Boolean(document.querySelector('.gtw-agent-approval-card'))`);
+    assert.equal(cardOnExplanation, false, 'Modal must not trigger on normal explanation text');
+
+    // Step 3: Response genuinely finishes with single bare file path
+    await evaluateInPage(`
+      (() => {
+        const div = document.getElementById('streaming-test-content');
+        if (div) {
+          div.textContent = 'package.json';
+          div.setAttribute('aria-busy', 'false');
+        }
+      })()
+    `);
+
+    // Verify modal DOES appear once completed
+    const cardOnCompletion = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('package.json'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardOnCompletion, true, 'Modal must trigger for completed bare file response');
+  });
 });
