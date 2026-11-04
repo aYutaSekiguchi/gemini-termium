@@ -10,7 +10,9 @@ import {
   MASTER_PROFILE_DIR,
   isProfileLoggedIn,
   ensureWorkspaceProfile,
-  syncCookiesToMaster
+  syncCookiesToMaster,
+  getWorkspaceProfileDir,
+  cloneProfile
 } from '../src/profileManager.js';
 import { ensureTermiumBinary } from '../scripts/setup-termium.js';
 import { startBackend } from '../src/backend.js';
@@ -87,6 +89,10 @@ Features:
     child.on('close', () => {
       if (isProfileLoggedIn(MASTER_PROFILE_DIR)) {
         console.log(`\n✔ Master Google login saved! All projects will now automatically start logged in.`);
+        try {
+          const wsDir = getWorkspaceProfileDir(process.cwd());
+          cloneProfile(MASTER_PROFILE_DIR, wsDir);
+        } catch {}
       } else {
         console.log(`\n⚠ Closed login window without saving session.`);
       }

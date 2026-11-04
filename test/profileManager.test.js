@@ -20,7 +20,7 @@ test('getWorkspaceProfileDir - deterministic and sanitized path', () => {
   assert.ok(p1.includes('ws_my-project_'));
 });
 
-test('isProfileLoggedIn - detects presence of cookies', () => {
+test('isProfileLoggedIn - detects presence of verified Google auth cookies', () => {
   const tmp = path.join(os.tmpdir(), `gtw-cookie-test-${Date.now()}`);
   fs.mkdirSync(tmp, { recursive: true });
 
@@ -29,8 +29,13 @@ test('isProfileLoggedIn - detects presence of cookies', () => {
 
     const netDir = path.join(tmp, 'Default', 'Network');
     fs.mkdirSync(netDir, { recursive: true });
-    fs.writeFileSync(path.join(netDir, 'Cookies'), 'fake-cookie-binary-data');
+    
+    // Unauthenticated tracking cookies should NOT count as logged in
+    fs.writeFileSync(path.join(netDir, 'Cookies'), 'fake-unauthenticated-tracking-cookies');
+    assert.equal(isProfileLoggedIn(tmp), false);
 
+    // Google authentication token presence must be detected
+    fs.writeFileSync(path.join(netDir, 'Cookies'), 'sqlite-binary-__Secure-OSID-session-data');
     assert.equal(isProfileLoggedIn(tmp), true);
   } finally {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

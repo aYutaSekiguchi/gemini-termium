@@ -25,27 +25,59 @@ export function getWorkspaceProfileDir(cwd = process.cwd()) {
   return path.join(PROFILES_DIR, `ws_${baseName}_${hash}`);
 }
 
-/**
- * Checks whether a given Chromium profile directory contains saved session cookies.
- */
-export function isProfileLoggedIn(profileDir) {
-  if (!fs.existsSync(profileDir)) return false;
-
-  const cookieCandidates = [
+function getCookieFile(profileDir) {
+  const candidates = [
     path.join(profileDir, 'Default', 'Network', 'Cookies'),
     path.join(profileDir, 'Default', 'Cookies'),
     path.join(profileDir, 'Network', 'Cookies')
   ];
-
-  for (const c of cookieCandidates) {
+  for (const c of candidates) {
     if (fs.existsSync(c)) {
       try {
         const stat = fs.statSync(c);
-        if (stat.size > 0) return true;
+        if (stat.size > 0) return c;
       } catch {}
     }
   }
-  return false;
+  return null;
+}
+
+/**
+ * Checks whether a given Chromium profile directory contains verified Google authentication cookies.
+ * Inspects sqlite cookie database for Google authentication signatures (__Secure-OSID, __Secure-1PSID, SID, SAPISID).
+ */
+export function isProfileLoggedIn(profileDir) {
+  if (!fs.existsSync(profileDir)) return false;
+
+  const cookieFile = getCookieFile(profileDir);
+  if (!cookieFile) return false;
+
+  try {
+    const buf = fs.readFileSync(cookieFile);
+    // Verified Google auth token keys in sqlite DB
+    const hasAuthToken =
+      buf.includes(Buffer.from('__Secure-OSID')) ||
+      buf.includes(Buffer.from('__Secure-1PSID')) ||
+      buf.includes(Buffer.from('SAPISID')) ||
+      buf.includes(Buffer.from('APISID')) ||
+      buf.includes(Buffer.from('OSID'));
+    return hasAuthToken;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns the mtime timestamp of the profile's Cookie file.
+ */
+export function getProfileCookieMtime(profileDir) {
+  const cookieFile = getCookieFile(profileDir);
+  if (!cookieFile) return 0;
+  try {
+    return fs.statSync(cookieFile).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -70,6 +102,37 @@ export function cloneProfile(sourceDir, targetDir) {
       return true;
     }
   });
+}
+
+/**
+ * Copies core authentication files (Cookies, Login Data, Local State) from source to target.
+ */
+export function syncAuthFiles(sourceDir, targetDir) {
+  if (!fs.existsSync(sourceDir) || !fs.existsSync(targetDir)) return false;
+
+  const filesToSync = [
+    ['Default', 'Cookies'],
+    ['Default', 'Cookies-journal'],
+    ['Default', 'Login Data'],
+    ['Default', 'Login Data-journal'],
+    ['Default', 'Network', 'Cookies'],
+    ['Default', 'Network', 'Cookies-journal'],
+    ['Local State']
+  ];
+
+  let copied = false;
+  for (const parts of filesToSync) {
+    const src = path.join(sourceDir, ...parts);
+    const dest = path.join(targetDir, ...parts);
+    if (fs.existsSync(src)) {
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        copied = true;
+      } catch {}
+    }
+  }
+  return copied;
 }
 
 /**
@@ -98,31 +161,11 @@ export function trySeedMasterFromSystem() {
  * Synchronizes refreshed session cookies from a workspace profile back to the master profile.
  */
 export function syncCookiesToMaster(workspaceProfileDir) {
-  if (!fs.existsSync(workspaceProfileDir) || !fs.existsSync(MASTER_PROFILE_DIR)) {
-    return false;
-  }
-
-  const wsNetworkDir = path.join(workspaceProfileDir, 'Default', 'Network');
-  const masterNetworkDir = path.join(MASTER_PROFILE_DIR, 'Default', 'Network');
-
-  if (fs.existsSync(wsNetworkDir)) {
-    try {
-      fs.mkdirSync(masterNetworkDir, { recursive: true });
-      fs.cpSync(wsNetworkDir, masterNetworkDir, {
-        recursive: true,
-        filter: (src) => !SKIP_FILENAMES.has(path.basename(src))
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  return syncAuthFiles(workspaceProfileDir, MASTER_PROFILE_DIR);
 }
 
 /**
- * Ensures a workspace profile is ready, automatically seeding Google authentication
- * from the master profile (or system profile) if the workspace profile is not yet initialized.
+ * Ensures a workspace profile is ready and fully synchronized with the master profile.
  *
  * @param {string} cwd - Workspace root
  * @returns {{ profileDir: string, isSeeded: boolean, isFirstTime: boolean }}
@@ -135,13 +178,25 @@ export function ensureWorkspaceProfile(cwd = process.cwd()) {
   // Auto-seed master profile from system if needed
   trySeedMasterFromSystem();
 
-  if (!fs.existsSync(profileDir) || !isProfileLoggedIn(profileDir)) {
+  const masterHasAuth = isProfileLoggedIn(MASTER_PROFILE_DIR);
+  const wsHasAuth = isProfileLoggedIn(profileDir);
+
+  if (!fs.existsSync(profileDir)) {
     isFirstTime = true;
-    if (isProfileLoggedIn(MASTER_PROFILE_DIR)) {
+    if (masterHasAuth) {
       cloneProfile(MASTER_PROFILE_DIR, profileDir);
       isSeeded = true;
     } else {
       fs.mkdirSync(profileDir, { recursive: true });
+    }
+  } else if (masterHasAuth) {
+    // If workspace profile lacks auth, or master profile was recently updated via --login
+    const masterMtime = getProfileCookieMtime(MASTER_PROFILE_DIR);
+    const wsMtime = getProfileCookieMtime(profileDir);
+
+    if (!wsHasAuth || masterMtime > wsMtime) {
+      cloneProfile(MASTER_PROFILE_DIR, profileDir);
+      isSeeded = true;
     }
   }
 
