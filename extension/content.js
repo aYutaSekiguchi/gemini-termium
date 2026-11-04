@@ -995,41 +995,44 @@
       const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
       const wsTree = wsData?.fileTree || '(empty workspace)';
 
-      const promptInstruction = `あなたは自律型コーディングエージェントとして動作してください。
-現在のワークスペース構造は以下の通りです：
+      const promptInstruction = `You are an autonomous coding agent operating in the user's local workspace.
+Current workspace structure:
 
-【ワークスペース構造】
-作業ディレクトリ: ${wsName}
-ファイル一覧:
+[WORKSPACE STRUCTURE]
+Working Directory: ${wsName}
+Files:
 ${wsTree}
 
-【エージェントの動作ルール】
-あなたの環境操作（読み込み・書き込み・コマンド実行）は、ブラウザによるHTMLタグの自動除去を防ぐため、必ず以下の角括弧形式 [tag]...[/tag] で出力してください。
-1. ファイル読み込み:
-   ファイルの中身を確認したい場合は、必ず以下の形式で出力すること:
-   [read]ファイルパス[/read] （または %<read>%ファイルパス%</read>%）
-   （例: [read]README.md[/read] や [read]src/server.js[/read]）
-2. ファイル書き込み:
-   コードの新規作成や編集・差分適用を行う場合は、以下の形式で出力すること:
-   [write path="ファイルパス"]書き込むファイルの内容[/write]
-3. シェルコマンド実行:
-   テスト実行、ビルド、git操作などが必要な場合は、以下の形式で出力すること:
-   [exec]実行するシェルコマンド[/exec]
-   （例: [exec]npm test[/exec] や [exec]git status[/exec]）
+[OPERATION RULES]
+To interact with the local workspace (reading files, writing code, executing commands), you MUST use the following bracket tags ([tag]...[/tag]). Do NOT use HTML angle tags (<read>, etc.) because browser HTML sanitizers strip them out.
 
-【最重要ルール】
-- HTMLタグ（<read>など）はブラウザのHTMLサニタイザーによって消去されてしまうため、必ず角括弧 [read], [exec], [write] を使用してください。
-- ファイルの内容を読みたい場合は、絶対にコマンド実行ではなく [read]ファイルパス[/read] を使用してください。
-- ツール呼び出しを出力した後は、ユーザーからの実行結果が返信されるまで追加の推論やメッセージ出力を完全に停止し、待機してください。
-- 1回の返答で出力するツール呼び出しは原則1つのみにしてください。`;
+1. Read File:
+   When you need to inspect or read a file, output ONLY:
+   [read]file_path[/read]
+   (e.g., [read]README.md[/read] or [read]src/server.js[/read])
+
+2. Write / Edit File:
+   When creating new files or modifying existing files, output:
+   [write path="file_path"]file_content[/write]
+
+3. Execute Shell Command:
+   When you need to run tests, build tools, inspect git status, or check environment, output:
+   [exec]shell_command[/exec]
+   (e.g., [exec]npm test[/exec] or [exec]git status[/exec])
+
+[CRITICAL RULES]
+- Always use square brackets ([read], [write], [exec]) instead of HTML tags to prevent DOM sanitization issues.
+- To read file contents, ALWAYS use [read]file_path[/read] rather than shell commands (cat/less).
+- After emitting a tool call tag, completely STOP generating further thoughts or text, and WAIT until the user provides the execution result.
+- Emit at most one tool call per turn.`;
 
       if (arg) {
-        const fullPrompt = `${promptInstruction}\n\n【ユーザーからの指示】\n${arg}`;
+        const fullPrompt = `${promptInstruction}\n\n[USER INSTRUCTION]\n${arg}`;
         setPromptText(editor, fullPrompt);
         showToast('🤖 Agent prompt prepared with file tree. Starting...', 'info', 3000);
         setTimeout(() => submitCurrentPrompt(), 300);
       } else {
-        const template = `${promptInstruction}\n\n【ユーザーからの指示】\n`;
+        const template = `${promptInstruction}\n\n[USER INSTRUCTION]\n`;
         setPromptText(editor, template);
         showToast('🤖 Agent template with file tree inserted. Add your prompt and press Enter.', 'info', 6000);
       }
