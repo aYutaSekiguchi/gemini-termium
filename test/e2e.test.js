@@ -1090,4 +1090,130 @@ console.log("hello from e2e test");</code></pre>
     }, 5000);
     assert.ok(editorResult, 'Editor must receive file content from inline command detection');
   });
+
+  it('21. Detects code-snippet-escaped read tag ```[read]fenced-escape-sample.txt[/read]``` and executes file read upon approval', async () => {
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'fenced-escape-sample.txt'), 'fenced_escape_read_success');
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const p = document.createElement('p');
+        p.textContent = 'Here is the file inspection request:';
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.className = 'language-[read]';
+        code.textContent = '[read]fenced-escape-sample.txt[/read]';
+        pre.appendChild(code);
+        resp.appendChild(p);
+        resp.appendChild(pre);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('fenced-escape-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped read tag');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file content read from workspace
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('fenced_escape_read_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive file content from snippet-escaped read tag');
+  });
+
+  it('22. Detects code-snippet-escaped exec tag ```[exec]echo "fenced_exec_escape_success"[/exec]``` and executes command upon approval', async () => {
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'I will run the command:\\n\\n\`\`\`[exec]echo "fenced_exec_escape_success"[/exec]\`\`\`';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Execute Shell Command') && card.innerText.includes('fenced_exec_escape_success'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped exec tag');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify command output submitted to editor
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('rich-textarea .ql-editor:not(.ql-clipboard)')?.textContent.trim()`);
+      return text && text.includes('fenced_exec_escape_success') ? text : null;
+    }, 5000);
+    assert.ok(editorResult, 'Editor must receive command output from snippet-escaped exec tag');
+  });
+
+  it('23. Detects code-snippet-escaped write tag ```[write path="..."]...[/write]``` and writes file upon approval', async () => {
+    const targetFile = path.join(tmpWorkspaceDir, 'fenced-write-sample.txt');
+    if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
+
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = 'Saving file:\\n\\n\`\`\`[write path="fenced-write-sample.txt"]\\nfenced write payload data\\n[/write]\`\`\`';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify approval modal appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Write Workspace File') && card.innerText.includes('fenced-write-sample.txt'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for snippet-escaped write tag');
+
+    // Approve action
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify file written to disk
+    await pollUntil(async () => fs.existsSync(targetFile) ? true : null, 5000);
+    assert.equal(fs.existsSync(targetFile), true);
+    const content = fs.readFileSync(targetFile, 'utf8');
+    assert.equal(content.trim(), 'fenced write payload data');
+  });
 });

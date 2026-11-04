@@ -995,7 +995,7 @@
       let fullPrompt = '';
       if (targetSkill && targetSkill !== 'none') {
         const taskPart = task ? `${task}\n\n` : '';
-        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step using structured commands ([read], [exec], or [write]).`;
+        fullPrompt = `@${targetSkill} ${taskPart}Workspace files (${wsName}):\n${wsTree}\n\nPlease proceed with the next step. Output your action inside a markdown code snippet (\`\`\`[read]path/to/file[/read]\`\`\` or \`\`\`[exec]command[/exec]\`\`\`).`;
       } else {
         const taskPart = task ? `\n\nTask:\n${task}` : '\n\nTask:\n';
         fullPrompt = `I am working on a local development project in "${wsName}".
@@ -1005,10 +1005,10 @@ Workspace files:
 ${wsTree}
 
 Please act as my collaborative pair programmer on this project.
-When recommending actions, output structured commands:
-- Read file: [read]path/to/file[/read] or \`\`\`bash\ncat path/to/file\n\`\`\`
-- Run command: [exec]command[/exec] or \`\`\`bash\ncommand\n\`\`\`
-- Write file: [write path="path/to/file"]...[/write] or \`\`\`lang\n// filepath: path/to/file\n...code...\n\`\`\`
+When recommending actions, output structured commands inside code snippets:
+- Read file: \`\`\`[read]path/to/file[/read]\`\`\` or \`\`\`bash\ncat path/to/file\n\`\`\`
+- Run command: \`\`\`[exec]command[/exec]\`\`\` or \`\`\`bash\ncommand\n\`\`\`
+- Write file: \`\`\`[write path="path/to/file"]\n...\n[/write]\`\`\` or \`\`\`lang\n// filepath: path/to/file\n...code...\n\`\`\`
 
 Suggest the next logical step and recommend files to inspect as we work together on this repository.${taskPart}`;
       }
@@ -1256,9 +1256,81 @@ Suggest the next logical step and recommend files to inspect as we work together
         });
       }
 
+      // 0a. Fenced Code Snippet Write with explicit [/write]:
+      // ```[write path="..."]...[/write]``` or ```write path="..."\n...[/write]```
+      const fencedWriteWithCloseRegex = /(?:```|~~~)(?:\[write\s+path=["']?([^"'\]\n]+)["']?\]|write\s+path=["']?([^"'\n]+)["']?)([\s\S]*?)\[\/write\]\s*(?:```|~~~)?/gi;
+      let m;
+      while ((m = fencedWriteWithCloseRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1] || m[2]);
+        const content = (m[3] || '').trim();
+        if (filePath) {
+          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
+        }
+      }
+
+      // 0b. Fenced Code Snippet Write without [/write]:
+      // ```[write path="..."]\ncontent\n```
+      const fencedWriteFenceOnlyRegex = /(?:```|~~~)(?:\[write\s+path=["']?([^"'\]\n]+)["']?\]|write\s+path=["']?([^"'\n]+)["']?)([\s\S]*?)(?:```|~~~)/gi;
+      while ((m = fencedWriteFenceOnlyRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1] || m[2]);
+        const content = (m[3] || '').trim();
+        if (filePath) {
+          addCandidate('write', 'Write Workspace File', { filePath, content }, m);
+        }
+      }
+
+      // 0c. Fenced Code Snippet Read with explicit [/read]:
+      // ```[read]path[/read]``` or ```read\npath\n[/read]```
+      const fencedReadWithCloseRegex = /(?:```|~~~)(?:\[read\]|read)\s*\r?\n?([\s\S]*?)\[\/read\]\s*(?:```|~~~)?/gi;
+      while ((m = fencedReadWithCloseRegex.exec(rawText)) !== null) {
+        const filePath = sanitizeTagValue(m[1]);
+        if (filePath) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+
+      // 0d. Fenced Code Snippet Read without [/read]:
+      // ```[read]\npath\n``` or ```read\npath\n```
+      const fencedReadFenceOnlyRegex = /(?:```|~~~)(?:\[read\]|read)\s*\r?\n?([\s\S]*?)(?:```|~~~)/gi;
+      while ((m = fencedReadFenceOnlyRegex.exec(rawText)) !== null) {
+        let clean = m[1].replace(/\[\/read\]/gi, '');
+        const filePath = sanitizeTagValue(clean);
+        if (filePath) {
+          addCandidate('read', 'Read Workspace File', { filePath }, m);
+        }
+      }
+
+      // 0e. Fenced Code Snippet Exec with explicit closing tag:
+      // ```[exec]cmd[/exec]``` or ```exec\ncmd\n[/exec]```
+      const fencedExecWithCloseRegex = /(?:```|~~~)(?:\[(?:exec|tool_call|command|bash)\]|(?:exec|tool_call|command))\s*\r?\n?([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]\s*(?:```|~~~)?/gi;
+      while ((m = fencedExecWithCloseRegex.exec(rawText)) !== null) {
+        const rawCmd = sanitizeTagValue(m[1]);
+        if (rawCmd) {
+          if (looksLikeFilePath(rawCmd)) {
+            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
+          }
+        }
+      }
+
+      // 0f. Fenced Code Snippet Exec without closing tag:
+      // ```[exec]\ncmd\n``` or ```exec\ncmd\n```
+      const fencedExecFenceOnlyRegex = /(?:```|~~~)(?:\[(?:exec|tool_call|command|bash)\]|(?:exec|tool_call|command))\s*\r?\n?([\s\S]*?)(?:```|~~~)/gi;
+      while ((m = fencedExecFenceOnlyRegex.exec(rawText)) !== null) {
+        let clean = m[1].replace(/\[\/(?:exec|tool_call|command|bash)\]/gi, '');
+        const rawCmd = sanitizeTagValue(clean);
+        if (rawCmd) {
+          if (looksLikeFilePath(rawCmd)) {
+            addCandidate('read', 'Read Workspace File', { filePath: rawCmd }, m);
+          } else {
+            addCandidate('tool_call', 'Execute Shell Command', { command: rawCmd }, m);
+          }
+        }
+      }
+
       // 1. Bracket Write: [write path="..."]content[/write]
       const bracketWriteRegex = /\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/gi;
-      let m;
       while ((m = bracketWriteRegex.exec(rawText)) !== null) {
         const filePath = sanitizeTagValue(m[1]);
         const content = (m[2] || '').trim();
@@ -1340,10 +1412,18 @@ Suggest the next logical step and recommend files to inspect as we work together
         }
       }
 
+      // Deduplicate identical spans (e.g. from overlapping regex passes)
+      const uniqueCandidates = [];
+      for (const cand of candidates) {
+        if (!uniqueCandidates.some((u) => u.startIndex === cand.startIndex && u.endIndex === cand.endIndex)) {
+          uniqueCandidates.push(cand);
+        }
+      }
+
       // Filter out candidates that are completely enclosed within another candidate!
       // This guarantees an outer [write] or %<write>% is NEVER hijacked by inner tags in its body.
-      const topLevelCandidates = candidates.filter((cand) => {
-        return !candidates.some((other) => {
+      const topLevelCandidates = uniqueCandidates.filter((cand) => {
+        return !uniqueCandidates.some((other) => {
           if (cand === other) return false;
           return other.startIndex <= cand.startIndex && other.endIndex >= cand.endIndex;
         });
@@ -1429,11 +1509,63 @@ Suggest the next logical step and recommend files to inspect as we work together
         if (!content) continue;
 
         const classes = `${codeElem.className || ''} ${block.className || ''}`.toLowerCase();
-        const langMatch = classes.match(/(?:language|lang)-([a-z0-9_+-]+)/i) ||
+        const langMatch = classes.match(/(?:language|lang)-(?:\[)?([a-z0-9_+-]+)\]?/i) ||
                           block.getAttribute('data-language');
-        const lang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
+        const rawLang = langMatch ? (typeof langMatch === 'string' ? langMatch : langMatch[1]).toLowerCase() : '';
+        const lang = rawLang.replace(/^[\[<]+|[\]>]+$/g, '').trim();
 
-        // 1. Read block: ```read
+        // 0. Inner structured tags inside rendered code block (e.g. ```[read]file[/read]``` rendered into <pre><code>)
+        const innerBracketWrite = content.match(/\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/i);
+        if (innerBracketWrite) {
+          const filePath = sanitizeTagValue(innerBracketWrite[1]);
+          if (filePath) {
+            return {
+              type: 'write',
+              title: 'Write Workspace File',
+              filePath,
+              content: (innerBracketWrite[2] || '').trim(),
+              rawTag: block.outerHTML || content
+            };
+          }
+        }
+
+        const innerBracketRead = content.match(/\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/i) ||
+                                 content.match(/\[read:\s*([^\]]+)\]/i);
+        if (innerBracketRead) {
+          const filePath = sanitizeTagValue(innerBracketRead[1]);
+          if (filePath) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath,
+              rawTag: block.outerHTML || content
+            };
+          }
+        }
+
+        const innerBracketExec = content.match(/\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/i) ||
+                                 content.match(/\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/i);
+        if (innerBracketExec) {
+          const rawCmd = sanitizeTagValue(innerBracketExec[1]);
+          if (rawCmd) {
+            if (looksLikeFilePath(rawCmd)) {
+              return {
+                type: 'read',
+                title: 'Read Workspace File',
+                filePath: rawCmd,
+                rawTag: block.outerHTML || content
+              };
+            }
+            return {
+              type: 'tool_call',
+              title: 'Execute Shell Command',
+              command: rawCmd,
+              rawTag: block.outerHTML || content
+            };
+          }
+        }
+
+        // 1. Read block: ```read or ```[read]
         if (lang === 'read') {
           const filePath = sanitizeTagValue(content);
           if (filePath) {
