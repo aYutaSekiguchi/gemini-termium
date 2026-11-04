@@ -83,7 +83,7 @@ export async function startBackend({
   cdpPort = null,
   grpcPort = null,
   bridgePort = null,
-  skillName = 'termium',
+  skillName = 'pair-programmer',
   isHeadless = true
 } = {}) {
   if (!chromeBin) {

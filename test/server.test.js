@@ -29,7 +29,7 @@ test('createBridgeServer - HTTP API endpoints integration', async () => {
     assert.equal(wsData.name, path.basename(root));
     assert.ok(wsData.fileTree.includes('- src/hello.js'));
     assert.ok(wsData.files.includes('src/hello.js'));
-    assert.equal(wsData.skillName, 'termium');
+    assert.equal(wsData.skillName, 'pair-programmer');
 
     // 3. Workspace file suggestion
     const filesRes = await fetch(`http://127.0.0.1:${port}/v1/workspace/files?q=hello`);

@@ -446,7 +446,7 @@ console.log("hello from e2e test");</code></pre>
       return text && text.includes('Workspace files') ? text : null;
     }, 5000);
 
-    assert.ok(editorContent.includes('@termium'), 'Prompt must invoke @termium skill');
+    assert.ok(editorContent.includes('@pair-programmer'), 'Prompt must invoke @pair-programmer skill');
     assert.ok(editorContent.includes('tree_sample.js'), 'Prompt must contain workspace file tree');
     assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });

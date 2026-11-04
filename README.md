@@ -50,7 +50,7 @@ Automating the Gemini web UI without a human in the loop may violate Google's Te
 1. **No Unattended Execution**: The bridge will **never** automatically execute commands or apply file changes in the background without explicit human approval.
 2. **Interactive Approval Card**: Whenever Gemini emits a tool call, an approval card appears on screen displaying the proposed action, target path, and command preview.
 3. **Explicit Human Trigger**: You must press `y` (approve and reply) or `n` (reject). Only after you approve does the action run and its result get sent back to Gemini.
-4. **Gemini Skills Integration (Enterprise Guardrail-Safe)**: To prevent strict Enterprise safety filters from flagging user prompts as prompt injection or C2 loops, `gemini-termium` delegates instruction rules to Gemini's official **Skills** (or Gems) feature. Register [`SKILL.md`](./SKILL.md) in your Gemini Skills as `termium`. `/agent <task>` automatically expands to `@termium <task>`, routing requests through trusted system-level instructions.
+4. **Gemini Skills Integration (Enterprise Guardrail-Safe)**: To prevent strict Enterprise safety filters from flagging user prompts as prompt injection or C2 loops, `gemini-termium` delegates instruction rules to Gemini's official **Skills** (or Gems) feature. Register [`SKILL.md`](./SKILL.md) in your Gemini Skills as `pair-programmer`. `/agent <task>` automatically expands to `@pair-programmer <task>`, routing requests through trusted system-level instructions.
    - Use a custom skill name: pass `--skill <name>` or type `/agent @<name> <task>`.
    - Disable skill prefix: pass `--skill none`.
 
@@ -120,7 +120,7 @@ A desktop window will open. Sign into your Google account once, then close the w
 
 | Command | Action |
 | :--- | :--- |
-| `/agent <task>` | Starts an autonomous coding session. Auto-scans workspace file tree and invokes Gemini Skill (default: `@termium`) with Human-in-the-Loop approval. |
+| `/agent <task>` | Starts an autonomous coding session. Auto-scans workspace file tree and invokes Gemini Skill (default: `@pair-programmer`) with Human-in-the-Loop approval. |
 | `/run <cmd>` | Executes a shell command in your workspace directory and displays stdout in a slide-out drawer. |
 | `/status` | Shows the current workspace path, connection status, and port info. |
 | `/help` | Displays available slash commands and usage tips. |

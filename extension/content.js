@@ -982,7 +982,7 @@
       const wsData = await callBridge('get_workspace');
       const wsName = wsData?.name || workspaceInfo?.name || 'workspace';
       const wsTree = wsData?.fileTree || '(empty workspace)';
-      let targetSkill = wsData?.skillName || workspaceInfo?.skillName || 'termium';
+      let targetSkill = wsData?.skillName || workspaceInfo?.skillName || 'pair-programmer';
 
       let task = (arg || '').trim();
       // Allow overriding skill name via prompt: /agent @custom-skill task...

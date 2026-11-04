@@ -10,7 +10,7 @@ import {
   formatWorkspaceTree
 } from './workspace.js';
 
-export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222, skillName = 'termium' } = {}) {
+export function createBridgeServer({ cwd = process.cwd(), cdpPort = 9222, skillName = 'pair-programmer' } = {}) {
 
   const server = http.createServer(async (req, res) => {
     // Enable CORS for Chrome Extension and Gemini web origin
