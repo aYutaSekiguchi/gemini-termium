@@ -163,7 +163,8 @@ Features:
   const termiumArgs = [
     '-s', `127.0.0.1:${backend.grpcPort}`,
     '-r', renderer,
-    '-p', palette
+    '-p', palette,
+    'https://gemini.google.com'
   ];
 
   const clientProcess = spawn(termiumBin, termiumArgs, { stdio: 'inherit' });

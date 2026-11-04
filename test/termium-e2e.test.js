@@ -79,7 +79,48 @@ test('Termium Full Integration & E2E: Unified Backend + Termium Client communica
     'console.log("Termium rocks!");'
   );
 
-  // 3. Verify gRPC Termium Client Communication
+  // 3. Verify in-page HUD badge connects to workspace within 4 seconds
+  console.log(`[E2E] Verifying in-page HUD badge connection...`);
+  let badgeText = '';
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${backend.cdpPort}/json/list`)).json();
+      const page = list.find((t) => t.type === 'page' && t.url.includes('gemini.google.com'));
+      if (page) {
+        const ws = new WebSocket(page.webSocketDebuggerUrl);
+        await new Promise((resolveWs) => {
+          ws.onopen = () => {
+            ws.send(JSON.stringify({
+              id: 888,
+              method: 'Runtime.evaluate',
+              params: {
+                expression: 'document.querySelector(".gtw-hud-badge .gtw-badge-label")?.textContent',
+                returnByValue: true
+              }
+            }));
+          };
+          ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.id === 888) {
+              badgeText = data.result?.result?.value || '';
+              ws.close();
+              resolveWs();
+            }
+          };
+          ws.onerror = () => {
+            ws.close();
+            resolveWs();
+          };
+        });
+        if (badgeText.startsWith('Workspace:')) break;
+      }
+    } catch {}
+  }
+  console.log(`[E2E] Verified in-page HUD badge text: "${badgeText}"`);
+  assert.ok(badgeText.includes(path.basename(tmpWorkspace)), `HUD badge should show active workspace name: ${badgeText}`);
+
+  // 4. Verify gRPC Termium Client Communication
   console.log(`[E2E] Verifying gRPC Termium service on port ${backend.grpcPort}...`);
   const client = new bc.BrowserControlClient(
     `127.0.0.1:${backend.grpcPort}`,

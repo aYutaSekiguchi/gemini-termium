@@ -206,7 +206,10 @@ export function startAutoInjector({
 
               lastInjectedTargetId = geminiPage.id;
               const rawScript = fs.readFileSync(scriptPath, 'utf8');
-              const customizedScript = `window.__GEMINI_TERMWAY_PORT__ = ${bridgePort};\n` + rawScript;
+              const customizedScript =
+                `window.__GEMINI_TERMIUM_PORT__ = ${bridgePort};\n` +
+                `window.__GEMINI_TERMWAY_PORT__ = ${bridgePort};\n` +
+                rawScript;
 
               const ws = new WebSocket(geminiPage.webSocketDebuggerUrl);
               activeWs = ws;
@@ -233,8 +236,9 @@ export function startAutoInjector({
                 try {
                   const data = JSON.parse(event.data);
 
-                  // Re-apply binding and script on navigation or page load
-                  if (data.method === 'Page.loadEventFired' || data.method === 'Page.frameNavigated') {
+                  // Re-apply binding and script only on main frame navigation or page load
+                  const isMainFrameNav = data.method === 'Page.frameNavigated' && !data.params?.frame?.parentId;
+                  if (data.method === 'Page.loadEventFired' || isMainFrameNav) {
                     ws.send(JSON.stringify({ id: msgSeq++, method: 'Page.setBypassCSP', params: { enabled: true } }));
                     ws.send(JSON.stringify({ id: msgSeq++, method: 'Runtime.addBinding', params: { name: '__GTW_CDP_BRIDGE__' } }));
                     ws.send(JSON.stringify({

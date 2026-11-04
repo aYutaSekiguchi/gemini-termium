@@ -5,18 +5,19 @@
  */
 
 (function () {
-  // Prevent double-initialization
+  // Prevent double-initialization in the same context
   if (window.__GTW_INITIALIZED__) return;
+  window.__GTW_INITIALIZED__ = true;
 
-  const BRIDGE_URL = window.__GEMINI_TERMWAY_PORT__
-    ? `http://127.0.0.1:${window.__GEMINI_TERMWAY_PORT__}`
-    : 'http://127.0.0.1:45140';
+  const port = window.__GEMINI_TERMIUM_PORT__ || window.__GEMINI_TERMWAY_PORT__ || 45140;
+  const BRIDGE_URL = `http://127.0.0.1:${port}`;
 
   let workspaceInfo = null;
-  const pendingRequests = new Map();
-  let requestIdCounter = 1;
+  window.__GTW_PENDING__ = window.__GTW_PENDING__ || new Map();
+  const pendingRequests = window.__GTW_PENDING__;
+  let requestIdCounter = Date.now();
 
-  console.log('[gemini-termway] Injecting in-page workspace bridge...');
+  console.log('[gemini-termium] In-page workspace bridge initializing...');
 
   // Response dispatcher for CDP binding responses
   window.__GTW_HANDLE_RESPONSE__ = function (id, data) {
@@ -36,13 +37,13 @@
     // Transport 1: Direct CDP Binding
     if (typeof window.__GTW_CDP_BRIDGE__ === 'function') {
       const id = 'req_' + (requestIdCounter++);
-      return new Promise((resolve) => {
+      const cdpResult = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           if (pendingRequests.has(id)) {
             pendingRequests.delete(id);
-            resolve({ ok: false, error: 'CDP bridge request timed out' });
+            resolve(null); // Fall through to HTTP fetch on timeout
           }
-        }, 30000);
+        }, 2000);
 
         pendingRequests.set(id, {
           resolve: (data) => {
@@ -56,9 +57,13 @@
         } catch (err) {
           clearTimeout(timer);
           pendingRequests.delete(id);
-          resolve({ ok: false, error: err.message });
+          resolve(null);
         }
       });
+
+      if (cdpResult && cdpResult.ok !== undefined) {
+        return cdpResult;
+      }
     }
 
     // Transport 2: HTTP Fetch fallback
@@ -87,7 +92,7 @@
   }
 
   function startBridge() {
-    if (window.__GTW_INITIALIZED__) return;
+    if (window.__GTW_DOM_READY__) return;
     if (!document.body) {
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startBridge, { once: true });
@@ -96,7 +101,7 @@
       }
       return;
     }
-    window.__GTW_INITIALIZED__ = true;
+    window.__GTW_DOM_READY__ = true;
 
     initDOMAndEvents();
   }
