@@ -86,6 +86,16 @@ test('executeShellCommand - captures stdout and exit code', async () => {
   assert.equal(res.code, 0);
   assert.ok(res.stdout.includes('test-termway-123'));
 
+  // Defensively strips leading/trailing percent signs and backticks
+  const percentRes = await executeShellCommand('%%echo "sanitized-percent"%%');
+  assert.equal(percentRes.ok, true);
+  assert.equal(percentRes.code, 0);
+  assert.ok(percentRes.stdout.includes('sanitized-percent'));
+
+  const emptyRes = await executeShellCommand('%%%%');
+  assert.equal(emptyRes.ok, false);
+  assert.ok(emptyRes.stderr.includes('Empty command string'));
+
   const failRes = await executeShellCommand('exit 42');
   assert.equal(failRes.ok, false);
   assert.equal(failRes.code, 42);

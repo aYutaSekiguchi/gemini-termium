@@ -127,8 +127,23 @@ export function applyFileChangesToDisk(fileActions, rootDir = process.cwd()) {
  */
 export function executeShellCommand(command, rootDir = process.cwd(), timeoutMs = 60000) {
   return new Promise((resolve) => {
+    const rawCmd = (command || '').trim();
+    // Sanitize any accidental leading/trailing '%' or backticks (e.g. from LLM prompt delimiters)
+    // to prevent shell job control errors like "zsh:fg:1: no job control in this shell"
+    const sanitizedCommand = rawCmd.replace(/^[%`\s]+|[%`\s]+$/g, '').trim();
+    if (!sanitizedCommand) {
+      resolve({
+        ok: false,
+        code: 1,
+        stdout: '',
+        stderr: 'Error: Empty command string after sanitization',
+        command
+      });
+      return;
+    }
+
     const shell = process.env.SHELL || (process.platform === 'win32' ? 'cmd.exe' : '/bin/sh');
-    const child = spawn(shell, [process.platform === 'win32' ? '/c' : '-c', command], {
+    const child = spawn(shell, [process.platform === 'win32' ? '/c' : '-c', sanitizedCommand], {
       cwd: rootDir,
       env: { ...process.env, FORCE_COLOR: '1' }
     });

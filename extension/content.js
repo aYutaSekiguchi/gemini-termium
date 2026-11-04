@@ -901,17 +901,23 @@
 ${wsTree}
 
 【エージェントの動作ルール】
+あなたの環境操作（読み込み・書き込み・コマンド実行）は、以下の専用タグを出力することでユーザー環境で安全に実行されます。
 1. ファイル読み込み:
-   必要なコードや設定を確認したい場合、%<read>%ファイルパス%</read>% とだけ出力し、ユーザーからのファイル内容の返信を待つこと。
+   ファイルの中身を確認したい場合は、必ず以下の形式で出力すること:
+   <read>ファイルパス</read> （または %<read>%ファイルパス%</read>%）
+   （例: <read>README.md</read> や <read>src/server.js</read>）
 2. ファイル書き込み:
-   コードの新規作成や更新・差分適用を行う場合、%<write path="ファイルパス">%コード内容%</write>% とだけ出力し、書き込み完了通知を待つこと。
-3. コマンド実行:
-   テスト実行やビルド、git操作などが必要な場合、%<tool_call>%実行コマンド%</tool_call>% とだけ出力し、ユーザーからの実行結果を待つこと。
+   コードの新規作成や編集・差分適用を行う場合は、以下の形式で出力すること:
+   <write path="ファイルパス">書き込むファイルの内容</write>
+3. シェルコマンド実行:
+   テスト実行、ビルド、git操作などが必要な場合は、以下の形式で出力すること:
+   <exec>実行するシェルコマンド</exec> （または <tool_call>コマンド</tool_call>）
+   （例: <exec>npm test</exec> や <exec>git status</exec>）
 
-【重要】
-- 上記のファイル一覧を参照し、必要なファイルがある場合は %<read>%ファイルパス%</read>% で内容を読み取ってから推論・作業を進めること。
-- 各ツール呼び出しを出力した後は、必ずユーザーからの結果返信が来るまで追加の推論や追加の出力を停止（待機）すること。
-- 1回のターンで実行するツール呼び出しは原則1つだけにすること。`;
+【最重要ルール】
+- ファイルの内容を読みたい場合は、絶対にコマンド実行ではなく <read>ファイルパス</read> を使用してください。
+- ツール呼び出しタグ（<read>, <write>, <exec>）を出力した後は、ユーザーからの実行結果が返信されるまで追加の推論やメッセージ出力を完全に停止し、待機してください。
+- 1回の返答で出力するツール呼び出しは原則1つのみにしてください。`;
 
       if (arg) {
         const fullPrompt = `${promptInstruction}\n\n【ユーザーからの指示】\n${arg}`;
@@ -1100,48 +1106,99 @@ ${wsTree}
     let activeAgentModal = null;
     const processedToolCallIds = new Set();
 
+    function sanitizeTagValue(val) {
+      if (!val) return '';
+      return val
+        .trim()
+        .replace(/^[%`'"\s]+|[%`'"\s]+$/g, '')
+        .trim();
+    }
+
+    function looksLikeFilePath(str) {
+      if (!str || typeof str !== 'string') return false;
+      const s = str.trim();
+      // Cannot contain spaces or shell control characters
+      if (/[\s\n\r|;&><$`()]/.test(s)) return false;
+      // Common source / config / doc file extensions
+      const extRegex = /\.(md|txt|json|js|mjs|cjs|ts|tsx|jsx|py|html|css|scss|sass|less|yaml|yml|toml|xml|csv|log|sh|env|sql|rs|go|c|cpp|h|hpp|rb|php|java|kt|swift|scala|vue|svelte)$/i;
+      if (extRegex.test(s)) return true;
+      // Relative path starting with ./ or ../ or containing path separators without being a known command
+      if ((s.startsWith('./') || s.startsWith('../') || s.includes('/')) && !/^(ls|cd|rm|cp|mv|cat|chmod|chown)$/i.test(s)) {
+        return true;
+      }
+      return false;
+    }
+
     function parseToolCallsFromText(rawText) {
       if (!rawText) return null;
 
-      // 1. Tool Call (command): %<tool_call>%cmd%</tool_call>% or <tool_call>cmd</tool_call>
-      const cmdMatch = rawText.match(/(?:%<|<)tool_call(?:>|%>)([\s\S]*?)(?:%<\/|<\/)tool_call(?:>|%>)/i);
-      if (cmdMatch) {
-        return {
-          type: 'tool_call',
-          title: 'Execute Shell Command',
-          command: cmdMatch[1].trim(),
-          rawTag: cmdMatch[0]
-        };
-      }
-
-      // 2. Read File: %<read>%path%</read>% or <read>path</read>
-      const readMatch = rawText.match(/(?:%<|<)read(?:>|%>)([\s\S]*?)(?:%<\/|<\/)read(?:>|%>)/i);
+      // 1. Read File: <read>path</read> or %<read>%path%</read>% or %<read>path</read>%
+      const readMatch = rawText.match(/(?:%<|<)read\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)read\s*(?:>%|>|%)/i);
       if (readMatch) {
-        return {
-          type: 'read',
-          title: 'Read Workspace File',
-          filePath: readMatch[1].trim(),
-          rawTag: readMatch[0]
-        };
+        const filePath = sanitizeTagValue(readMatch[1]);
+        if (filePath) {
+          return {
+            type: 'read',
+            title: 'Read Workspace File',
+            filePath,
+            rawTag: readMatch[0]
+          };
+        }
       }
 
-      // 3. Write File: %<write path="...">content%</write>% or <write path="...">content</write>
-      const writeMatch = rawText.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?(?:>|%>)([\s\S]*?)(?:%<\/|<\/)write(?:>|%>)/i);
+      // 2. Write File: <write path="...">content</write> or %<write path="...">content%</write>%
+      const writeMatch = rawText.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)write\s*(?:>%|>|%)/i);
       if (writeMatch) {
-        return {
-          type: 'write',
-          title: 'Write Workspace File',
-          filePath: writeMatch[1].trim(),
-          content: writeMatch[2],
-          rawTag: writeMatch[0]
-        };
+        const filePath = sanitizeTagValue(writeMatch[1]);
+        let content = writeMatch[2] || '';
+        // Strip accidental enclosing percent delimiters from content
+        content = content.replace(/^%*\r?\n?/, '').replace(/\r?\n?%*$/, '');
+        if (filePath) {
+          return {
+            type: 'write',
+            title: 'Write Workspace File',
+            filePath,
+            content,
+            rawTag: writeMatch[0]
+          };
+        }
+      }
+
+      // 3. Exec / Shell Command: <exec>, <tool_call>, <command>, <bash>
+      const cmdMatch = rawText.match(/(?:%<|<)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)/i);
+      if (cmdMatch) {
+        const rawCmd = sanitizeTagValue(cmdMatch[1]);
+        if (rawCmd) {
+          // Smart Intent Detection: If Gemini outputted a file path (e.g. README.md or %README.md%)
+          // inside a command tag instead of <read>, treat it as a file read rather than executing
+          // it as a shell command which would cause "zsh:fg:1: no job control in this shell" or "permission denied".
+          if (looksLikeFilePath(rawCmd)) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath: rawCmd,
+              rawTag: cmdMatch[0]
+            };
+          }
+
+          return {
+            type: 'tool_call',
+            title: 'Execute Shell Command',
+            command: rawCmd,
+            rawTag: cmdMatch[0]
+          };
+        }
       }
 
       return null;
     }
 
     function checkForAgentToolCalls() {
-      const responses = Array.from(document.querySelectorAll('model-response, .conversation-container'));
+      // Prioritize model-response elements so we never mistakenly match on user-query prompt text
+      let responses = Array.from(document.querySelectorAll('model-response'));
+      if (responses.length === 0) {
+        responses = Array.from(document.querySelectorAll('.conversation-container'));
+      }
       if (responses.length === 0) return;
       const latest = responses[responses.length - 1];
 

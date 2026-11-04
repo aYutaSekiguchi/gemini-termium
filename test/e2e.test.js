@@ -456,4 +456,51 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorContent.includes('%<read>%'), 'Prompt must contain %<read>% instruction');
     assert.ok(editorContent.includes('fix tree_sample.js bug'), 'Prompt must contain user task');
   });
+
+  it('9. Auto-detects file read in %<tool_call>%%%README.md%%%</tool_call>% and reads file on approval without zsh error', async () => {
+    // Write sample README.md file in workspace
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'README.md'), '# Autonomous Agent Documentation\nSafe TOS Compliant Execution');
+
+    // Simulate Gemini emitting %<tool_call>%%%README.md%%%</tool_call>% (the exact bug pattern reported by user)
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '%<tool_call>%%%README.md%%%</tool_call>%';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify Human-in-the-Loop card appears with title for Read Workspace File (auto-detected, NOT Shell Command)
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('README.md'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must auto-detect file read and sanitize delimiters');
+
+    // User approves
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify prompt input contains the file contents formatted for reply
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
+      return text && text.includes('[File: README.md]') ? text : null;
+    }, 5000);
+
+    assert.ok(editorResult.includes('%<tool_result>%'));
+    assert.ok(editorResult.includes('[File: README.md]'));
+    assert.ok(editorResult.includes('Safe TOS Compliant Execution'));
+    assert.ok(!editorResult.includes('zsh:fg:1'), 'Must not execute zsh job control fg error');
+  });
 });
