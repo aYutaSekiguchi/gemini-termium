@@ -901,22 +901,23 @@
 ${wsTree}
 
 【エージェントの動作ルール】
-あなたの環境操作（読み込み・書き込み・コマンド実行）は、以下の専用タグを出力することでユーザー環境で安全に実行されます。
+あなたの環境操作（読み込み・書き込み・コマンド実行）は、ブラウザによるHTMLタグの自動除去を防ぐため、必ず以下の角括弧形式 [tag]...[/tag] で出力してください。
 1. ファイル読み込み:
    ファイルの中身を確認したい場合は、必ず以下の形式で出力すること:
-   <read>ファイルパス</read> （または %<read>%ファイルパス%</read>%）
-   （例: <read>README.md</read> や <read>src/server.js</read>）
+   [read]ファイルパス[/read] （または %<read>%ファイルパス%</read>%）
+   （例: [read]README.md[/read] や [read]src/server.js[/read]）
 2. ファイル書き込み:
    コードの新規作成や編集・差分適用を行う場合は、以下の形式で出力すること:
-   <write path="ファイルパス">書き込むファイルの内容</write>
+   [write path="ファイルパス"]書き込むファイルの内容[/write]
 3. シェルコマンド実行:
    テスト実行、ビルド、git操作などが必要な場合は、以下の形式で出力すること:
-   <exec>実行するシェルコマンド</exec> （または <tool_call>コマンド</tool_call>）
-   （例: <exec>npm test</exec> や <exec>git status</exec>）
+   [exec]実行するシェルコマンド[/exec]
+   （例: [exec]npm test[/exec] や [exec]git status[/exec]）
 
 【最重要ルール】
-- ファイルの内容を読みたい場合は、絶対にコマンド実行ではなく <read>ファイルパス</read> を使用してください。
-- ツール呼び出しタグ（<read>, <write>, <exec>）を出力した後は、ユーザーからの実行結果が返信されるまで追加の推論やメッセージ出力を完全に停止し、待機してください。
+- HTMLタグ（<read>など）はブラウザのHTMLサニタイザーによって消去されてしまうため、必ず角括弧 [read], [exec], [write] を使用してください。
+- ファイルの内容を読みたい場合は、絶対にコマンド実行ではなく [read]ファイルパス[/read] を使用してください。
+- ツール呼び出しを出力した後は、ユーザーからの実行結果が返信されるまで追加の推論やメッセージ出力を完全に停止し、待機してください。
 - 1回の返答で出力するツール呼び出しは原則1つのみにしてください。`;
 
       if (arg) {
@@ -1132,7 +1133,107 @@ ${wsTree}
     function parseToolCallsFromText(rawText) {
       if (!rawText) return null;
 
-      // 1. Read File: <read>path</read> or %<read>%path%</read>% or %<read>path</read>%
+      // 1. Bracket Format: [read]path[/read] or [read: path]
+      const bracketReadMatch = rawText.match(/\[read(?::|\s*)\]?([\s\S]*?)\[\/read\]/i) ||
+                               rawText.match(/\[read:\s*([^\]]+)\]/i);
+      if (bracketReadMatch) {
+        const filePath = sanitizeTagValue(bracketReadMatch[1]);
+        if (filePath) {
+          return {
+            type: 'read',
+            title: 'Read Workspace File',
+            filePath,
+            rawTag: bracketReadMatch[0]
+          };
+        }
+      }
+
+      // 2. Bracket Write: [write path="..."]content[/write]
+      const bracketWriteMatch = rawText.match(/\[write\s+path=["']?([^"'\]]+)["']?\]([\s\S]*?)\[\/write\]/i);
+      if (bracketWriteMatch) {
+        const filePath = sanitizeTagValue(bracketWriteMatch[1]);
+        const content = (bracketWriteMatch[2] || '').trim();
+        if (filePath) {
+          return {
+            type: 'write',
+            title: 'Write Workspace File',
+            filePath,
+            content,
+            rawTag: bracketWriteMatch[0]
+          };
+        }
+      }
+
+      // 3. Bracket Exec: [exec]cmd[/exec] or [tool_call]cmd[/tool_call]
+      const bracketExecMatch = rawText.match(/\[(?:exec|tool_call|command|bash)\]([\s\S]*?)\[\/(?:exec|tool_call|command|bash)\]/i) ||
+                               rawText.match(/\[(?:exec|tool_call|command|bash):\s*([^\]]+)\]/i);
+      if (bracketExecMatch) {
+        const rawCmd = sanitizeTagValue(bracketExecMatch[1]);
+        if (rawCmd) {
+          if (looksLikeFilePath(rawCmd)) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath: rawCmd,
+              rawTag: bracketExecMatch[0]
+            };
+          }
+          return {
+            type: 'tool_call',
+            title: 'Execute Shell Command',
+            command: rawCmd,
+            rawTag: bracketExecMatch[0]
+          };
+        }
+      }
+
+      // 4. Code Block Format: ```read\npath\n``` or ```exec\ncmd\n``` or ```write path="..."\ncontent\n```
+      const codeBlockMatch = rawText.match(/```(?:(read|exec|command|bash)|(?:write\s+path=["']?([^"'\n`]+)["']?))\s*\n([\s\S]*?)```/i);
+      if (codeBlockMatch) {
+        const actionType = (codeBlockMatch[1] || 'write').toLowerCase();
+        const writePath = codeBlockMatch[2];
+        const payload = (codeBlockMatch[3] || '').trim();
+
+        if (actionType === 'read') {
+          const filePath = sanitizeTagValue(payload);
+          if (filePath) {
+            return {
+              type: 'read',
+              title: 'Read Workspace File',
+              filePath,
+              rawTag: codeBlockMatch[0]
+            };
+          }
+        } else if (writePath) {
+          return {
+            type: 'write',
+            title: 'Write Workspace File',
+            filePath: sanitizeTagValue(writePath),
+            content: payload,
+            rawTag: codeBlockMatch[0]
+          };
+        } else {
+          const cmd = sanitizeTagValue(payload);
+          if (cmd) {
+            if (looksLikeFilePath(cmd)) {
+              return {
+                type: 'read',
+                title: 'Read Workspace File',
+                filePath: cmd,
+                rawTag: codeBlockMatch[0]
+              };
+            }
+            return {
+              type: 'tool_call',
+              title: 'Execute Shell Command',
+              command: cmd,
+              rawTag: codeBlockMatch[0]
+            };
+          }
+        }
+      }
+
+      // 5. XML / Percent Delimiter Format: <read> or %<read>%
       const readMatch = rawText.match(/(?:%<|<)read\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)read\s*(?:>%|>|%)/i);
       if (readMatch) {
         const filePath = sanitizeTagValue(readMatch[1]);
@@ -1146,12 +1247,10 @@ ${wsTree}
         }
       }
 
-      // 2. Write File: <write path="...">content</write> or %<write path="...">content%</write>%
       const writeMatch = rawText.match(/(?:%<|<)write\s+path=["']?([^"'>]+)["']?\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)write\s*(?:>%|>|%)/i);
       if (writeMatch) {
         const filePath = sanitizeTagValue(writeMatch[1]);
         let content = writeMatch[2] || '';
-        // Strip accidental enclosing percent delimiters from content
         content = content.replace(/^%*\r?\n?/, '').replace(/\r?\n?%*$/, '');
         if (filePath) {
           return {
@@ -1164,14 +1263,10 @@ ${wsTree}
         }
       }
 
-      // 3. Exec / Shell Command: <exec>, <tool_call>, <command>, <bash>
       const cmdMatch = rawText.match(/(?:%<|<)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)\s*([\s\S]*?)\s*(?:%<\/|<\/|%)(?:exec|tool_call|command|bash)\s*(?:>%|>|%)/i);
       if (cmdMatch) {
         const rawCmd = sanitizeTagValue(cmdMatch[1]);
         if (rawCmd) {
-          // Smart Intent Detection: If Gemini outputted a file path (e.g. README.md or %README.md%)
-          // inside a command tag instead of <read>, treat it as a file read rather than executing
-          // it as a shell command which would cause "zsh:fg:1: no job control in this shell" or "permission denied".
           if (looksLikeFilePath(rawCmd)) {
             return {
               type: 'read',
@@ -1180,7 +1275,6 @@ ${wsTree}
               rawTag: cmdMatch[0]
             };
           }
-
           return {
             type: 'tool_call',
             title: 'Execute Shell Command',
@@ -1188,6 +1282,36 @@ ${wsTree}
             rawTag: cmdMatch[0]
           };
         }
+      }
+
+      // 6. Delimiter-bleed or stripped fallback: %%filename.ext%% (Turn 1 bug)
+      const percentFileMatch = rawText.match(/%%([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)%%/);
+      if (percentFileMatch) {
+        const filePath = sanitizeTagValue(percentFileMatch[1]);
+        if (looksLikeFilePath(filePath)) {
+          return {
+            type: 'read',
+            title: 'Read Workspace File',
+            filePath,
+            rawTag: percentFileMatch[0]
+          };
+        }
+      }
+
+      // 7. Sanitized Bare Response fallback: When Google SafeHtml completely strips <read>
+      // e.g. "package.json" or "README.md" as the sole response
+      const cleanLines = rawText
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('Gemini の回答') && !l.startsWith('Gemini') && !l.startsWith('Model'));
+      if (cleanLines.length === 1 && looksLikeFilePath(cleanLines[0])) {
+        const filePath = sanitizeTagValue(cleanLines[0]);
+        return {
+          type: 'read',
+          title: 'Read Workspace File',
+          filePath,
+          rawTag: filePath
+        };
       }
 
       return null;

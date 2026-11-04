@@ -503,4 +503,49 @@ console.log("hello from e2e test");</code></pre>
     assert.ok(editorResult.includes('Safe TOS Compliant Execution'));
     assert.ok(!editorResult.includes('zsh:fg:1'), 'Must not execute zsh job control fg error');
   });
+
+  it('10. Detects bracket format [read]package.json[/read] and executes file read upon approval', async () => {
+    // Write sample package.json file in workspace
+    fs.writeFileSync(path.join(tmpWorkspaceDir, 'package.json'), '{"name": "termium-agent-test"}');
+
+    // Simulate Gemini emitting bracket format [read]package.json[/read] (immune to Google SafeHtml stripping)
+    await evaluateInPage(`
+      (() => {
+        const resp = document.createElement('model-response');
+        const inner = document.createElement('div');
+        inner.className = 'model-response-text';
+        inner.textContent = '[read]package.json[/read]';
+        resp.appendChild(inner);
+        document.body.appendChild(resp);
+      })()
+    `);
+
+    // Verify Human-in-the-Loop card appears
+    const cardFound = await pollUntil(async () => {
+      return evaluateInPage(`
+        (() => {
+          const card = document.querySelector('.gtw-agent-approval-card');
+          return Boolean(card && card.innerText.includes('Read Workspace File') && card.innerText.includes('package.json'));
+        })()
+      `);
+    }, 5000);
+    assert.equal(cardFound, true, 'Approval modal must appear for bracket [read] tag');
+
+    // User approves
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('.gtw-agent-btn-approve');
+        if (btn) btn.click();
+      })()
+    `);
+
+    // Verify prompt input contains the file contents formatted for reply
+    const editorResult = await pollUntil(async () => {
+      const text = await evaluateInPage(`document.querySelector('[contenteditable="true"]')?.textContent.trim()`);
+      return text && text.includes('[File: package.json]') ? text : null;
+    }, 5000);
+
+    assert.ok(editorResult.includes('%<tool_result>%'));
+    assert.ok(editorResult.includes('termium-agent-test'));
+  });
 });
